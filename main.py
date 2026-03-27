@@ -12,6 +12,7 @@ app = FastAPI(title="Armac Viagem Corporativa API")
 # =========================
 # 🔥 CORS (ESSENCIAL)
 # =========================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,34 +58,36 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# FLYTOUR
+# FLYTOUR (ROBUSTO)
 # =========================
 
-def get_vendas(idv: str) -> List[Dict[str, Any]]:
+def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
-    params = {"idvExterno": idv} if idv else {}
+
+    params = {}
+    if idv:
+        params["idvExterno"] = idv
 
     try:
         r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         data = r.json()
 
-        print("\n===== DEBUG FLYTOUR =====")
+        # DEBUG opcional
+        print("\n===== FLYTOUR RAW =====")
         print(data)
 
-        # API padrão Flytour
         if isinstance(data, dict) and "data" in data:
-            return data["data"]
+            return {"data": data["data"]}
 
-        # fallback
         if isinstance(data, list):
-            return data
+            return {"data": data}
 
-        return []
+        return {"data": []}
 
     except Exception as e:
         print("ERRO FLYTOUR:", str(e))
-        return []
+        return {"data": []}
 
 # =========================
 # NORMALIZAÇÃO
@@ -98,8 +101,8 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         preco = safe_float(item.get("tarifa"))
         rota = item.get("rotaResumida", "")
 
-        origem = item.get("origemRotaAereo")
-        destino = item.get("destinoRotaAereo")
+        origem = rota.split("/")[0] if "/" in rota else None
+        destino = rota.split("/")[1] if "/" in rota else None
 
         return {
             "type": "flight",
@@ -146,21 +149,34 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 # =========================
-# PROCESSAMENTO
+# PROCESSAMENTO (CORRIGIDO)
 # =========================
 
-def process_single_idv(idv: str):
-    registros = get_vendas(idv)
+def process_single_idv(idv: Optional[str] = None):
+    vendas = get_vendas(idv)
     itens = []
+
+    data = vendas.get("data", [])
+
+    if isinstance(data, list):
+        registros = data
+    elif isinstance(data, dict):
+        registros = [data]
+    else:
+        registros = []
 
     for raw in registros:
 
         if not isinstance(raw, dict):
             continue
 
-        # 🔥 filtro correto (não quebra se vier vazio)
-        if idv and str(raw.get("idvExterno")) != str(idv):
-            continue
+        # 🔥 FILTRO CORRETO (SEM ERRO DE TIPO)
+        if idv:
+            try:
+                if int(raw.get("idvExterno")) != int(idv):
+                    continue
+            except:
+                continue
 
         contract_item = normalize_item(raw)
 
@@ -171,7 +187,8 @@ def process_single_idv(idv: str):
             "tipo": contract_item["type"],
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
-            "departamento": raw.get("nomeFantasiaCliente"),
+            "departamento": raw.get("nomeFantasia"),
+
             "flytour": contract_item
         })
 
