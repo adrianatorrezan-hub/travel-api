@@ -5,8 +5,20 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Armac Viagem Corporativa API")
+
+# =========================
+# 🔥 CORS (ESSENCIAL)
+# =========================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================
 # CONFIG
@@ -48,9 +60,9 @@ def split_ids(ids: str) -> List[str]:
 # FLYTOUR
 # =========================
 
-def get_vendas(idv: str) -> Dict[str, Any]:
+def get_vendas(idv: str) -> List[Dict[str, Any]]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
-    params = {"idvExterno": idv}
+    params = {"idvExterno": idv} if idv else {}
 
     try:
         r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
@@ -60,17 +72,19 @@ def get_vendas(idv: str) -> Dict[str, Any]:
         print("\n===== DEBUG FLYTOUR =====")
         print(data)
 
+        # API padrão Flytour
         if isinstance(data, dict) and "data" in data:
-            return {"data": data["data"]}
+            return data["data"]
 
+        # fallback
         if isinstance(data, list):
-            return {"data": data}
+            return data
 
-        return {"data": []}
+        return []
 
     except Exception as e:
         print("ERRO FLYTOUR:", str(e))
-        return {"data": []}
+        return []
 
 # =========================
 # NORMALIZAÇÃO
@@ -84,8 +98,8 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         preco = safe_float(item.get("tarifa"))
         rota = item.get("rotaResumida", "")
 
-        origem = rota.split("/")[0] if "/" in rota else None
-        destino = rota.split("/")[1] if "/" in rota else None
+        origem = item.get("origemRotaAereo")
+        destino = item.get("destinoRotaAereo")
 
         return {
             "type": "flight",
@@ -136,26 +150,16 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # =========================
 
 def process_single_idv(idv: str):
-    vendas = get_vendas(idv)
+    registros = get_vendas(idv)
     itens = []
 
-    data = vendas.get("data", [])
-
-    # 🔥 GARANTE LISTA
-    if not isinstance(data, list):
-        return {
-            "idv": idv,
-            "total_itens": 0,
-            "itens": []
-        }
-
-    for raw in data:
+    for raw in registros:
 
         if not isinstance(raw, dict):
             continue
 
-        # 🔥 FILTRO CORRETO PELO ID REAL
-        if str(raw.get("idvExterno")) != str(idv):
+        # 🔥 filtro correto (não quebra se vier vazio)
+        if idv and str(raw.get("idvExterno")) != str(idv):
             continue
 
         contract_item = normalize_item(raw)
@@ -181,6 +185,10 @@ def process_single_idv(idv: str):
 # ENDPOINTS
 # =========================
 
+@app.get("/")
+def root():
+    return {"status": "API online"}
+
 @app.get("/compare/{idv}")
 def compare_one(idv: str):
     return process_single_idv(idv)
@@ -193,13 +201,7 @@ def compare_many(ids: str = Query(...)):
 
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
-    id_list = split_ids(ids) if ids else [
-        "1169902",
-        "1170333",
-        "1170526",
-        "1170527",
-        "1170531"
-    ]
+    id_list = split_ids(ids) if ids else ["1169902"]
 
     return {
         "resultados": [process_single_idv(i) for i in id_list]
