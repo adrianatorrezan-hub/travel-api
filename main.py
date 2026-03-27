@@ -58,22 +58,17 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# FLYTOUR (ROBUSTO)
+# FLYTOUR (SEM DEPENDER DE FILTRO)
 # =========================
 
-def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
+def get_vendas() -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
-    params = {}
-    if idv:
-        params["idvExterno"] = idv
-
     try:
-        r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+        r = requests.get(url, auth=AUTH, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         data = r.json()
 
-        # DEBUG opcional
         print("\n===== FLYTOUR RAW =====")
         print(data)
 
@@ -149,11 +144,11 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 # =========================
-# PROCESSAMENTO (CORRIGIDO)
+# PROCESSAMENTO (CORRETO)
 # =========================
 
 def process_single_idv(idv: Optional[str] = None):
-    vendas = get_vendas(idv)
+    vendas = get_vendas()
     itens = []
 
     data = vendas.get("data", [])
@@ -170,12 +165,15 @@ def process_single_idv(idv: Optional[str] = None):
         if not isinstance(raw, dict):
             continue
 
-        # 🔥 FILTRO CORRETO (SEM ERRO DE TIPO)
+        # 🔥 FILTRO ROBUSTO
         if idv:
-            try:
-                if int(raw.get("idvExterno")) != int(idv):
-                    continue
-            except:
+            idv_api = (
+                raw.get("idvExterno")
+                or raw.get("idv")
+                or raw.get("numeroRequisicao")
+            )
+
+            if str(idv_api) != str(idv):
                 continue
 
         contract_item = normalize_item(raw)
