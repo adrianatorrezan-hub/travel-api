@@ -5,8 +5,20 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Armac Viagem Corporativa API")
+
+# =========================
+# 🔥 CORS (ESSENCIAL)
+# =========================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # depois pode restringir
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================
 # CONFIG
@@ -16,11 +28,21 @@ FLYTOUR_BASE_URL = os.getenv(
     "FLYTOUR_BASE_URL",
     "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
 )
+
 FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
+
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 
 REQUEST_TIMEOUT = 10
+
+# =========================
+# ROOT (evita erro 404)
+# =========================
+
+@app.get("/")
+def root():
+    return {"status": "API rodando 🚀"}
 
 # =========================
 # HELPERS
@@ -32,17 +54,21 @@ def safe_float(v: Any) -> float:
     except:
         return 0.0
 
+
 def safe_int(v: Any) -> int:
     try:
         return int(float(v)) if v not in (None, "") else 0
     except:
         return 0
 
+
 def calc_unit_price(total: float, qty: int) -> float:
     return round(total / qty, 2) if qty else total
 
+
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
+
 
 # =========================
 # FLYTOUR
@@ -60,19 +86,18 @@ def get_vendas(idv: str) -> Dict[str, Any]:
         print("\n===== DEBUG FLYTOUR =====")
         print(data)
 
-        # Caso padrão
         if isinstance(data, dict) and "data" in data:
             return {"data": data["data"]}
 
-        # Caso lista direta
         if isinstance(data, list):
             return {"data": data}
 
         return {"data": []}
 
     except Exception as e:
-        print("ERRO FLYTOUR:", str(e))
+        print("❌ ERRO FLYTOUR:", str(e))
         return {"data": []}
+
 
 # =========================
 # NORMALIZAÇÃO
@@ -133,6 +158,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     return None
 
+
 # =========================
 # PROCESSAMENTO
 # =========================
@@ -143,7 +169,6 @@ def process_single_idv(idv: str):
 
     data = vendas.get("data", [])
 
-    # 🔥 Corrige estrutura da API
     if isinstance(data, list):
         registros = data
     elif isinstance(data, dict):
@@ -167,7 +192,6 @@ def process_single_idv(idv: str):
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
-
             "flytour": contract_item
         })
 
@@ -177,6 +201,7 @@ def process_single_idv(idv: str):
         "itens": itens
     }
 
+
 # =========================
 # ENDPOINTS
 # =========================
@@ -185,11 +210,13 @@ def process_single_idv(idv: str):
 def compare_one(idv: str):
     return process_single_idv(idv)
 
+
 @app.get("/compare")
 def compare_many(ids: str = Query(...)):
     return {
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
+
 
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
