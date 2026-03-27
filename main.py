@@ -5,20 +5,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Armac Viagem Corporativa API")
-
-# =========================
-# 🔥 CORS (ESSENCIAL)
-# =========================
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # depois pode restringir
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # =========================
 # CONFIG
@@ -28,21 +16,11 @@ FLYTOUR_BASE_URL = os.getenv(
     "FLYTOUR_BASE_URL",
     "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
 )
-
 FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
-
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 
 REQUEST_TIMEOUT = 10
-
-# =========================
-# ROOT (evita erro 404)
-# =========================
-
-@app.get("/")
-def root():
-    return {"status": "API rodando 🚀"}
 
 # =========================
 # HELPERS
@@ -54,21 +32,17 @@ def safe_float(v: Any) -> float:
     except:
         return 0.0
 
-
 def safe_int(v: Any) -> int:
     try:
         return int(float(v)) if v not in (None, "") else 0
     except:
         return 0
 
-
 def calc_unit_price(total: float, qty: int) -> float:
     return round(total / qty, 2) if qty else total
 
-
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
-
 
 # =========================
 # FLYTOUR
@@ -95,9 +69,8 @@ def get_vendas(idv: str) -> Dict[str, Any]:
         return {"data": []}
 
     except Exception as e:
-        print("❌ ERRO FLYTOUR:", str(e))
+        print("ERRO FLYTOUR:", str(e))
         return {"data": []}
-
 
 # =========================
 # NORMALIZAÇÃO
@@ -158,7 +131,6 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     return None
 
-
 # =========================
 # PROCESSAMENTO
 # =========================
@@ -169,17 +141,21 @@ def process_single_idv(idv: str):
 
     data = vendas.get("data", [])
 
-    if isinstance(data, list):
-        registros = data
-    elif isinstance(data, dict):
-        registros = [data]
-    else:
-        registros = []
+    # 🔥 GARANTE LISTA
+    if not isinstance(data, list):
+        return {
+            "idv": idv,
+            "total_itens": 0,
+            "itens": []
+        }
 
-    for raw in registros:
+    for raw in data:
 
         if not isinstance(raw, dict):
-            print("IGNORADO:", raw)
+            continue
+
+        # 🔥 FILTRO CORRETO PELO ID REAL
+        if str(raw.get("idvExterno")) != str(idv):
             continue
 
         contract_item = normalize_item(raw)
@@ -201,7 +177,6 @@ def process_single_idv(idv: str):
         "itens": itens
     }
 
-
 # =========================
 # ENDPOINTS
 # =========================
@@ -210,17 +185,21 @@ def process_single_idv(idv: str):
 def compare_one(idv: str):
     return process_single_idv(idv)
 
-
 @app.get("/compare")
 def compare_many(ids: str = Query(...)):
     return {
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
 
-
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
-    id_list = split_ids(ids) if ids else ["1353716"]
+    id_list = split_ids(ids) if ids else [
+        "1169902",
+        "1170333",
+        "1170526",
+        "1170527",
+        "1170531"
+    ]
 
     return {
         "resultados": [process_single_idv(i) for i in id_list]
