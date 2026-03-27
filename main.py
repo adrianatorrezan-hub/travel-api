@@ -59,43 +59,45 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# 🔥 FLYTOUR COM PAGINAÇÃO REAL
+# 🔥 FLYTOUR (ULTRA ROBUSTO)
 # =========================
 
 def get_vendas() -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
     all_data = []
-    page = 1
-    max_pages = 20  # pode aumentar se quiser
 
     try:
-        while page <= max_pages:
-            params = {"page": page}
+        # 🔥 tenta várias formas de paginação automaticamente
+        for page in range(1, 30):
 
-            r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
-            r.raise_for_status()
-            data = r.json()
+            for param_name in ["pagina", "page", "pageNumber", "Page"]:
 
-            print(f"\n===== PAGE {page} =====")
+                params = {param_name: page}
 
-            if isinstance(data, dict) and "data" in data:
-                page_data = data["data"]
-            elif isinstance(data, list):
-                page_data = data
-            else:
-                break
+                r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+                r.raise_for_status()
+                data = r.json()
 
-            if not page_data:
-                break
+                print(f"\n===== TRY {param_name} = {page} =====")
 
-            all_data.extend(page_data)
+                if isinstance(data, dict) and "data" in data:
+                    page_data = data["data"]
+                else:
+                    continue
 
-            # se veio menos de 50 itens → acabou
-            if len(page_data) < 50:
-                break
+                if not page_data:
+                    break
 
-            page += 1
+                # evita duplicar registros
+                if page_data in all_data:
+                    continue
+
+                all_data.extend(page_data)
+
+                # se veio menos que padrão → acabou
+                if len(page_data) < 50:
+                    return {"data": all_data}
 
         return {"data": all_data}
 
@@ -184,7 +186,7 @@ def process_single_idv(idv: Optional[str] = None):
         if not isinstance(raw, dict):
             continue
 
-        # 🔥 FILTRO REAL FUNCIONANDO
+        # 🔥 filtro robusto
         if idv:
             idv_api = (
                 raw.get("idvExterno")
