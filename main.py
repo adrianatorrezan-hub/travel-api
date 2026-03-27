@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# 🔥 CORS (ESSENCIAL)
+# 🔥 CORS
 # =========================
 
 app.add_middleware(
@@ -29,10 +29,11 @@ FLYTOUR_BASE_URL = os.getenv(
     "FLYTOUR_BASE_URL",
     "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
 )
+
 FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
-AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 
+AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 REQUEST_TIMEOUT = 10
 
 # =========================
@@ -58,27 +59,45 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# FLYTOUR (SEM DEPENDER DE FILTRO)
+# 🔥 FLYTOUR COM PAGINAÇÃO REAL
 # =========================
 
 def get_vendas() -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
+    all_data = []
+    page = 1
+    max_pages = 20  # pode aumentar se quiser
+
     try:
-        r = requests.get(url, auth=AUTH, timeout=REQUEST_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+        while page <= max_pages:
+            params = {"page": page}
 
-        print("\n===== FLYTOUR RAW =====")
-        print(data)
+            r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
 
-        if isinstance(data, dict) and "data" in data:
-            return {"data": data["data"]}
+            print(f"\n===== PAGE {page} =====")
 
-        if isinstance(data, list):
-            return {"data": data}
+            if isinstance(data, dict) and "data" in data:
+                page_data = data["data"]
+            elif isinstance(data, list):
+                page_data = data
+            else:
+                break
 
-        return {"data": []}
+            if not page_data:
+                break
+
+            all_data.extend(page_data)
+
+            # se veio menos de 50 itens → acabou
+            if len(page_data) < 50:
+                break
+
+            page += 1
+
+        return {"data": all_data}
 
     except Exception as e:
         print("ERRO FLYTOUR:", str(e))
@@ -144,7 +163,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 # =========================
-# PROCESSAMENTO (CORRETO)
+# PROCESSAMENTO
 # =========================
 
 def process_single_idv(idv: Optional[str] = None):
@@ -165,7 +184,7 @@ def process_single_idv(idv: Optional[str] = None):
         if not isinstance(raw, dict):
             continue
 
-        # 🔥 FILTRO ROBUSTO
+        # 🔥 FILTRO REAL FUNCIONANDO
         if idv:
             idv_api = (
                 raw.get("idvExterno")
