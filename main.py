@@ -91,7 +91,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# 🔥 NORMALIZAÇÃO (ENRIQUECIDA)
+# 🔥 NORMALIZAÇÃO (CORRIGIDA)
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -106,25 +106,26 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if preco == 0:
         return None
 
-    tipo_raw = str(item.get("codigoProduto", "")).lower()
+    # 🔥 CORREÇÃO REAL (FLYTOUR)
+    tipo_raw = str(item.get("codigoProduto", "")).upper()
 
-    # 🔥 categoria inteligente
-    categoria = "outros"
-    if "aereo" in tipo_raw or "flight" in tipo_raw:
+    if tipo_raw in ["TKT", "AIR"]:
         categoria = "aereo"
-    elif "hotel" in tipo_raw:
+    elif tipo_raw in ["HTL", "HOTEL"]:
         categoria = "hotel"
-    elif "carro" in tipo_raw:
+    elif tipo_raw in ["CAR", "LOC"]:
         categoria = "carro"
+    else:
+        categoria = "outros"
 
-    # 🔥 datas completas
+    # 🔥 datas
     data_compra = item.get("dtCriacao") or item.get("dataCriacao")
     data_aprovacao = item.get("dtAprovacao") or item.get("dataAprovacao")
 
     checkin = item.get("dtInicioServicos")
     checkout = item.get("dtFimServicos")
 
-    # 🔥 cálculo de dias
+    # 🔥 dias
     dias = 1
     try:
         if checkin and checkout:
@@ -136,7 +137,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 política simples
+    # 🔥 política
     politica = "dentro"
     motivo = None
 
@@ -159,13 +160,11 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "destino": item.get("destinoRotaAereo"),
         "rota": item.get("rotaResumida"),
 
-        # 🔥 TODAS AS DATAS
         "data_compra": data_compra,
         "data_aprovacao": data_aprovacao,
         "checkin": checkin,
         "checkout": checkout,
 
-        # 🔥 data principal para gráfico
         "data": checkin or data_compra,
 
         "dias": dias,
