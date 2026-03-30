@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -43,12 +42,24 @@ REQUEST_TIMEOUT = 20
 
 def safe_float(v: Any) -> float:
     try:
-        return float(v) if v not in (None, "", "null") else 0.0
+        if v in (None, "", "null"):
+            return 0.0
+
+        valor = float(v)
+
+        # 🔥 CORREÇÃO DE ESCALA (centavos)
+        if valor > 10000:
+            valor = valor / 100
+
+        return valor
+
     except:
         return 0.0
 
+
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
+
 
 def parse_date(date_str: Optional[str]) -> Optional[str]:
     if not date_str:
@@ -56,7 +67,8 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
     try:
         return datetime.fromisoformat(date_str.replace("Z", "")).isoformat()
     except:
-        return date_str
+        return None
+
 
 # =========================
 # 🔥 FLYTOUR
@@ -86,42 +98,48 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         print("❌ ERRO FLYTOUR:", str(e))
         return {"data": []}
 
+
 # =========================
 # 🔥 NORMALIZAÇÃO FINAL
 # =========================
 
-def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
-    # 🔥 DETECÇÃO REAL DE PREÇO (pega QUALQUER campo válido)
-    preco = 0
-    for k, v in item.items():
-        valor = safe_float(v)
-        if valor > preco:
-            preco = valor
+    # 🔥 PREÇO CORRETO
+    preco = (
+        safe_float(item.get("valorTotal")) or
+        safe_float(item.get("tarifaTotal")) or
+        safe_float(item.get("valor")) or
+        safe_float(item.get("tarifa")) or
+        safe_float(item.get("preco")) or
+        0.0
+    )
 
-    if preco == 0:
-        return None
-
-    # 🔥 TIPO CORRETO
+    # 🔥 DETECÇÃO DE CATEGORIA ROBUSTA
     tipo_raw = str(item.get("codigoProduto", "")).upper()
+    descricao = str(item).lower()
 
-    if tipo_raw in ["TKT", "AIR", "AEREO"]:
+    if any(x in tipo_raw for x in ["TKT", "AIR"]) or "aereo" in descricao:
         categoria = "aereo"
-    elif tipo_raw in ["HTL", "HOTEL"]:
+
+    elif any(x in tipo_raw for x in ["HTL", "HOTEL"]) or "hotel" in descricao:
         categoria = "hotel"
-    elif tipo_raw in ["CAR", "LOC", "CARRO"]:
+
+    elif any(x in tipo_raw for x in ["CAR", "LOC"]) or any(
+        x in descricao for x in ["carro", "locacao", "rent"]
+    ):
         categoria = "carro"
+
     else:
         categoria = "outros"
 
-    # 🔥 DATAS CORRETAS (sem bug de 2025)
+    # 🔥 DATAS
     checkin = parse_date(item.get("dtInicioServicos"))
     checkout = parse_date(item.get("dtFimServicos"))
     data_compra = parse_date(item.get("dtCriacao") or item.get("dataCriacao"))
     data_aprovacao = parse_date(item.get("dtAprovacao") or item.get("dataAprovacao"))
 
-    # 🔥 DATA PRINCIPAL
-    data_evento = checkin or data_compra or data_aprovacao
+    data_evento = checkin or data_compra or data_aprovacao or datetime.now().isoformat()
 
     # 🔥 DIAS
     dias = 1
@@ -133,7 +151,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except:
         dias = 1
 
-    diaria = round(preco / dias, 2)
+    diaria = round(preco / dias, 2) if dias else preco
 
     # 🔥 POLÍTICA
     politica = "dentro"
@@ -172,6 +190,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "motivo": motivo
     }
 
+
 # =========================
 # PROCESSAMENTO
 # =========================
@@ -189,21 +208,17 @@ def process_single_idv(idv: str):
         data = []
 
     for raw in data:
-
         if not isinstance(raw, dict):
             continue
 
-        contract_item = normalize_item(raw)
-
-        if not contract_item:
-            continue
+        item = normalize_item(raw)
 
         itens.append({
-            "tipo": contract_item["type"],
+            "tipo": item["type"],
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
-            "flytour": contract_item
+            "flytour": item
         })
 
     return {
@@ -211,6 +226,7 @@ def process_single_idv(idv: str):
         "total_itens": len(itens),
         "itens": itens
     }
+
 
 # =========================
 # ENDPOINTS
@@ -220,15 +236,18 @@ def process_single_idv(idv: str):
 def root():
     return {"status": "API online"}
 
+
 @app.get("/compare/{idv}")
 def compare_one(idv: str):
     return process_single_idv(idv)
+
 
 @app.get("/compare")
 def compare_many(ids: str = Query(...)):
     return {
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
+
 
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
