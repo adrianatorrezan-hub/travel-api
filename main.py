@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# 🔥 CORS
+# 🔥 CORS (ESSENCIAL)
 # =========================
 
 app.add_middleware(
@@ -34,6 +34,7 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
+
 REQUEST_TIMEOUT = 10
 
 # =========================
@@ -59,47 +60,31 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# 🔥 FLYTOUR (ULTRA ROBUSTO)
+# 🔥 FLYTOUR (CORRIGIDO)
 # =========================
 
-def get_vendas() -> Dict[str, Any]:
+def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
-    all_data = []
+    params = {}
+    if idv:
+        params["idvExterno"] = idv  # 🔥 ESSENCIAL
 
     try:
-        # 🔥 tenta várias formas de paginação automaticamente
-        for page in range(1, 30):
+        r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
 
-            for param_name in ["pagina", "page", "pageNumber", "Page"]:
+        print("\n===== FLYTOUR RESPONSE =====")
+        print(data)
 
-                params = {param_name: page}
+        if isinstance(data, dict) and "data" in data:
+            return {"data": data["data"]}
 
-                r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
-                r.raise_for_status()
-                data = r.json()
+        if isinstance(data, list):
+            return {"data": data}
 
-                print(f"\n===== TRY {param_name} = {page} =====")
-
-                if isinstance(data, dict) and "data" in data:
-                    page_data = data["data"]
-                else:
-                    continue
-
-                if not page_data:
-                    break
-
-                # evita duplicar registros
-                if page_data in all_data:
-                    continue
-
-                all_data.extend(page_data)
-
-                # se veio menos que padrão → acabou
-                if len(page_data) < 50:
-                    return {"data": all_data}
-
-        return {"data": all_data}
+        return {"data": []}
 
     except Exception as e:
         print("ERRO FLYTOUR:", str(e))
@@ -168,34 +153,18 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # PROCESSAMENTO
 # =========================
 
-def process_single_idv(idv: Optional[str] = None):
-    vendas = get_vendas()
-    itens = []
+def process_single_idv(idv: str):
+    vendas = get_vendas(idv)
 
+    itens = []
     data = vendas.get("data", [])
 
-    if isinstance(data, list):
-        registros = data
-    elif isinstance(data, dict):
-        registros = [data]
-    else:
-        registros = []
+    if isinstance(data, dict):
+        data = [data]
 
-    for raw in registros:
-
+    for raw in data:
         if not isinstance(raw, dict):
             continue
-
-        # 🔥 filtro robusto
-        if idv:
-            idv_api = (
-                raw.get("idvExterno")
-                or raw.get("idv")
-                or raw.get("numeroRequisicao")
-            )
-
-            if str(idv_api) != str(idv):
-                continue
 
         contract_item = normalize_item(raw)
 
@@ -206,8 +175,7 @@ def process_single_idv(idv: Optional[str] = None):
             "tipo": contract_item["type"],
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
-            "departamento": raw.get("nomeFantasia"),
-
+            "departamento": raw.get("nomeFantasiaCliente"),
             "flytour": contract_item
         })
 
