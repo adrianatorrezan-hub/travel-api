@@ -33,7 +33,9 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-REQUEST_TIMEOUT = 30
+
+# 🔥 AUMENTADO (evita timeout)
+REQUEST_TIMEOUT = 60
 
 
 # =========================
@@ -47,7 +49,6 @@ def safe_float(v: Any) -> float:
 
         valor = float(str(v).replace(",", "."))
 
-        # 🔥 Corrige centavos (Flytour manda inteiro)
         if valor > 10000:
             valor = valor / 100
 
@@ -122,7 +123,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
         except Exception as e:
             print("❌ ERRO FLYTOUR:", str(e))
-            break
+            return {"data": []}  # 🔥 evita quebrar API
 
     print(f"✅ TOTAL FINAL: {len(all_data)} registros")
 
@@ -135,7 +136,6 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
-    # 🔥 PREÇO CORRETO
     preco = (
         safe_float(item.get("valorTotal")) or
         safe_float(item.get("tarifaTotal")) or
@@ -144,7 +144,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         0.0
     )
 
-    # 🔥 CATEGORIA INTELIGENTE
     tipo_raw = str(item.get("codigoProduto", "")).upper()
     descricao = str(item).lower()
 
@@ -163,7 +162,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     else:
         categoria = "outros"
 
-    # 🔥 DATAS COMPLETAS
     data_lancamento = parse_date(
         item.get("dataLancamento") or
         item.get("dtLancamento") or
@@ -175,7 +173,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     data_evento = dt_inicio or data_lancamento or datetime.now().isoformat()
 
-    # 🔥 DIAS
     dias = 1
     try:
         if dt_inicio and dt_fim:
@@ -187,7 +184,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 FATURAS (ROBUSTO)
     faturas = (
         item.get("faturas") or
         item.get("numeroFatura") or
@@ -201,7 +197,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     elif isinstance(faturas, dict):
         faturas = str(faturas)
 
-    # 🔥 ID VENDA
     numero_venda = (
         item.get("numeroVenda") or
         item.get("idVenda") or
@@ -212,24 +207,17 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "type": categoria,
         "categoria": categoria,
-
         "numero_venda": numero_venda,
-
         "preco_total": preco,
         "preco_unitario": diaria,
-
         "data_evento": data_evento,
         "data": data_evento,
-
         "data_lancamento": data_lancamento,
         "dt_inicio_servico": dt_inicio,
         "dt_fim_servico": dt_fim,
-
         "checkin": dt_inicio,
         "checkout": dt_fim,
-
         "faturas": faturas,
-
         "dias": dias
     }
 
@@ -239,34 +227,43 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 # =========================
 
 def process_single_idv(idv: str):
-    vendas = get_vendas(idv)
+    try:
+        vendas = get_vendas(idv)
 
-    itens = []
-    data = vendas.get("data", [])
+        itens = []
+        data = vendas.get("data", [])
 
-    if isinstance(data, dict):
-        data = list(data.values())
+        if isinstance(data, dict):
+            data = list(data.values())
 
-    for raw in data:
-        if not isinstance(raw, dict):
-            continue
+        for raw in data:
+            if not isinstance(raw, dict):
+                continue
 
-        item = normalize_item(raw)
+            item = normalize_item(raw)
 
-        itens.append({
-            "tipo": item["type"],
-            "viajante": raw.get("passageiro"),
-            "aprovador": raw.get("solicitante"),
-            "departamento": raw.get("nomeFantasiaCliente"),
-            "registro_venda": item.get("numero_venda"),
-            "flytour": item
-        })
+            itens.append({
+                "tipo": item["type"],
+                "viajante": raw.get("passageiro"),
+                "aprovador": raw.get("solicitante"),
+                "departamento": raw.get("nomeFantasiaCliente"),
+                "registro_venda": item.get("numero_venda"),
+                "flytour": item
+            })
 
-    return {
-        "idv": idv,
-        "total_itens": len(itens),
-        "itens": itens
-    }
+        return {
+            "idv": idv,
+            "total_itens": len(itens),
+            "itens": itens
+        }
+
+    except Exception as e:
+        return {
+            "idv": idv,
+            "total_itens": 0,
+            "itens": [],
+            "erro": str(e)
+        }
 
 
 # =========================
