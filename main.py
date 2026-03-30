@@ -33,9 +33,8 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
+REQUEST_TIMEOUT = 60  # 🔥 aumentado
 
-# 🔥 importante pra evitar 502
-REQUEST_TIMEOUT = 20
 
 # =========================
 # HELPERS
@@ -52,7 +51,6 @@ def safe_float(v: Any) -> float:
             valor = valor / 100
 
         return valor
-
     except:
         return 0.0
 
@@ -71,7 +69,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR (ANTI-502)
+# 🔥 FLYTOUR (ROBUSTO)
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -80,6 +78,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     all_data = []
     page = 1
     page_size = 100
+    retries = 3
 
     while True:
         params = {
@@ -123,8 +122,15 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         except Exception as e:
             print("❌ ERRO FLYTOUR:", str(e))
 
-            # 🔥 NÃO quebra mais a API
-            return {"data": []}
+            if retries > 0:
+                retries -= 1
+                print("🔁 Tentando novamente...")
+                continue
+
+            return {
+                "error": True,
+                "message": "Erro ao conectar com Flytour"
+            }
 
     print(f"✅ TOTAL FINAL: {len(all_data)} registros")
 
@@ -194,15 +200,10 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "type": categoria,
-        "categoria": categoria,
         "numero_venda": numero_venda,
         "preco_total": preco,
         "preco_unitario": diaria,
         "data_evento": data_evento,
-        "data": data_evento,
-        "data_lancamento": data_lancamento,
-        "dt_inicio_servico": dt_inicio,
-        "dt_fim_servico": dt_fim,
         "dias": dias
     }
 
@@ -214,22 +215,22 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def process_single_idv(idv: str):
     vendas = get_vendas(idv)
 
+    if vendas.get("error"):
+        return {
+            "idv": idv,
+            "error": True,
+            "message": vendas["message"]
+        }
+
     itens = []
     data = vendas.get("data", [])
 
-    if isinstance(data, dict):
-        data = list(data.values())
-
     for raw in data:
-        if not isinstance(raw, dict):
-            continue
-
         item = normalize_item(raw)
 
         itens.append({
             "tipo": item["type"],
             "viajante": raw.get("passageiro"),
-            "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
             "registro_venda": item.get("numero_venda"),
             "flytour": item
