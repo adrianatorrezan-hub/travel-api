@@ -33,7 +33,7 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = 30
 
 # =========================
 # HELPERS
@@ -46,7 +46,7 @@ def safe_float(v: Any) -> float:
 
         valor = float(v)
 
-        # 🔥 Corrige centavos (Flytour costuma mandar inteiro)
+        # 🔥 Corrige centavos (Flytour manda inteiro)
         if valor > 10000:
             valor = valor / 100
 
@@ -69,32 +69,51 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR
+# 🔥 BUSCA COMPLETA FLYTOUR (SEM LIMITES)
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
-    params = {}
-    if idv:
-        params["idvExterno"] = idv
+    all_data = []
+    page = 1
 
-    try:
-        r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+    while True:
+        params = {
+            "page": page,
+            "limit": 1000  # 🔥 aumenta ao máximo
+        }
 
-        if isinstance(data, dict) and "data" in data:
-            return {"data": data["data"]}
+        if idv:
+            params["idvExterno"] = idv
 
-        if isinstance(data, list):
-            return {"data": data}
+        try:
+            r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
 
-        return {"data": []}
+            chunk = data.get("data") if isinstance(data, dict) else data
 
-    except Exception as e:
-        print("ERRO FLYTOUR:", str(e))
-        return {"data": []}
+            if not chunk:
+                break
+
+            all_data.extend(chunk)
+
+            print(f"Página {page} → {len(chunk)} registros")
+
+            # 🔥 fim da paginação
+            if len(chunk) < 1000:
+                break
+
+            page += 1
+
+        except Exception as e:
+            print("ERRO FLYTOUR:", str(e))
+            break
+
+    print(f"TOTAL FINAL: {len(all_data)} registros")
+
+    return {"data": all_data}
 
 
 # =========================
@@ -103,7 +122,6 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
-    # 🔥 PREÇO
     preco = (
         safe_float(item.get("valorTotal")) or
         safe_float(item.get("tarifaTotal")) or
@@ -112,20 +130,26 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         0.0
     )
 
-    # 🔥 CATEGORIA
+    # 🔥 CATEGORIA INTELIGENTE
     tipo_raw = str(item.get("codigoProduto", "")).upper()
     descricao = str(item).lower()
 
-    if tipo_raw in ["TKT", "AIR"] or "aereo" in descricao:
+    if tipo_raw in ["TKT", "AIR"]:
         categoria = "aereo"
-    elif tipo_raw in ["HTL", "HOTEL"] or "hotel" in descricao:
+    elif tipo_raw in ["HTL", "HOTEL"]:
         categoria = "hotel"
-    elif tipo_raw in ["CAR", "LOC"] or any(x in descricao for x in ["carro", "locacao"]):
+    elif tipo_raw in ["CAR", "LOC"]:
         categoria = "carro"
+    elif "hotel" in descricao:
+        categoria = "hotel"
+    elif any(x in descricao for x in ["carro", "locacao", "locadora"]):
+        categoria = "carro"
+    elif any(x in descricao for x in ["aereo", "voo"]):
+        categoria = "aereo"
     else:
         categoria = "outros"
 
-    # 🔥 DATAS
+    # 🔥 TODAS AS DATAS DISPONÍVEIS
     data_lancamento = parse_date(
         item.get("dataLancamento") or
         item.get("dtLancamento") or
@@ -135,6 +159,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     dt_inicio = parse_date(item.get("dtInicioServicos"))
     dt_fim = parse_date(item.get("dtFimServicos"))
 
+    # 🔥 DATA PRINCIPAL
     data_evento = dt_inicio or data_lancamento or datetime.now().isoformat()
 
     # 🔥 DIAS
@@ -149,21 +174,18 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 FATURAS (robusto)
+    # 🔥 FATURAS
     faturas = (
         item.get("faturas") or
         item.get("numeroFatura") or
         item.get("fatura") or
-        item.get("numFatura") or
         None
     )
 
     if isinstance(faturas, list):
         faturas = ", ".join([str(f) for f in faturas if f])
-    elif isinstance(faturas, dict):
-        faturas = str(faturas)
 
-    # 🔥 NUMERO VENDA
+    # 🔥 ID VENDA
     numero_venda = (
         item.get("numeroVenda") or
         item.get("idVenda") or
@@ -171,34 +193,17 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         item.get("idvExterno")
     )
 
-    # 🔥 POLÍTICA
-    politica = "dentro"
-    motivo = None
-
-    if categoria == "hotel" and diaria > 500:
-        politica = "fora"
-        motivo = "Diária acima de R$500"
-
-    if categoria == "aereo" and preco > 2000:
-        politica = "fora"
-        motivo = "Passagem acima de R$2000"
-
     return {
         "type": categoria,
         "categoria": categoria,
 
         "numero_venda": numero_venda,
-        "fornecedor": item.get("nomeFornecedor"),
 
         "preco_total": preco,
         "preco_unitario": diaria,
 
-        "origem": item.get("origemRotaAereo"),
-        "destino": item.get("destinoRotaAereo"),
-        "rota": item.get("rotaResumida"),
-
-        "data": data_evento,
         "data_evento": data_evento,
+        "data": data_evento,
 
         "data_lancamento": data_lancamento,
         "dt_inicio_servico": dt_inicio,
@@ -209,9 +214,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
         "faturas": faturas,
 
-        "dias": dias,
-        "politica": politica,
-        "motivo": motivo
+        "dias": dias
     }
 
 
@@ -227,9 +230,6 @@ def process_single_idv(idv: str):
 
     if isinstance(data, dict):
         data = list(data.values())
-
-    if not isinstance(data, list):
-        data = []
 
     for raw in data:
         if not isinstance(raw, dict):
