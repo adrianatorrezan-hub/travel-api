@@ -1,116 +1,83 @@
+from flask import Flask, jsonify
 import requests
-import re
+import base64
 import time
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from requests.auth import HTTPBasicAuth
 
-# 🔥 ESSENCIAL pro Render
-app = FastAPI()
+app = Flask(__name__)
 
-# 🔓 liberar acesso do frontend (Lovable)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 🔗 API da Armac
+# =============================
+# CONFIG
+# =============================
 BASE_URL = "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com/api/armac/vendas"
+PAGE_SIZE = 50
 
-# 🔐 BASIC AUTH (SEU CASO)
-AUTH = HTTPBasicAuth("admin", "Armac2025@Secure")
+# Basic Auth manual (corrige 401)
+user_pass = "admin:Armac2025@Secure"
+token = base64.b64encode(user_pass.encode()).decode()
 
+HEADERS = {
+    "Authorization": f"Basic {token}"
+}
 
-# =========================
-# extrair total de páginas
-# =========================
-def extrair_total_paginas(message):
-    match = re.search(r"Page\s+\d+\s+of\s+(\d+)", message or "")
-    if match:
-        return int(match.group(1))
-    return None
+# =============================
+# FUNÇÃO PRINCIPAL
+# =============================
+def buscar_todas_vendas():
+    page = 1
+    all_items = []
 
+    while True:
+        url = f"{BASE_URL}?page={page}&pageSize={PAGE_SIZE}"
 
-# =========================
-# health check
-# =========================
-@app.get("/")
-def home():
-    return {"status": "API online"}
+        print(f"🔄 Buscando página {page}...")
 
-
-# =========================
-# endpoint principal (TUDO)
-# =========================
-@app.get("/all")
-def get_all_vendas():
-    try:
-        page = 1
-        page_size = 50
-        todas_vendas = []
-        total_paginas = None
-
-        print("🚀 Iniciando coleta...\n")
-
-        while True:
-            url = f"{BASE_URL}?page={page}&pageSize={page_size}"
-
+        try:
             response = requests.get(
                 url,
-                auth=AUTH,   # 🔥 AQUI resolve o 401
+                headers=HEADERS,
                 timeout=30
             )
 
-            response.raise_for_status()
+            # Se não autorizado → erro direto
+            if response.status_code == 401:
+                print("❌ ERRO 401 - Não autorizado")
+                return {"error": "401 Unauthorized - verifique usuário/senha ou acesso à API"}
 
+            response.raise_for_status()
             data = response.json()
 
-            # descobre total páginas
-            if total_paginas is None:
-                total_paginas = extrair_total_paginas(data.get("message", ""))
+            items = data.get("data", [])
 
-            vendas = data.get("data", [])
-
-            # progresso
-            if total_paginas:
-                print(f"📄 Página {page}/{total_paginas}")
-            else:
-                print(f"📄 Página {page}")
-
-            if not vendas:
-                print("⚠️ Sem dados")
+            if not items:
+                print("✅ Fim dos dados")
                 break
 
-            todas_vendas.extend(vendas)
+            all_items.extend(items)
 
-            # última página
-            if total_paginas and page >= total_paginas:
-                print("🏁 Fim (total páginas)")
-                break
-
-            # fallback segurança
-            if len(vendas) < page_size:
-                print("🏁 Fim (fallback)")
-                break
+            print(f"✔ Página {page} OK ({len(items)} registros)")
 
             page += 1
-            time.sleep(0.2)
+            time.sleep(0.3)  # evita overload
 
-        print(f"\n✅ TOTAL: {len(todas_vendas)} registros\n")
+        except Exception as e:
+            print(f"⚠️ Erro na página {page}: {e}")
+            break
 
-        return {
-            "total_itens": len(todas_vendas),
-            "itens": todas_vendas
-        }
+    return {
+        "total_itens": len(all_items),
+        "items": all_items
+    }
 
-    except Exception as e:
-        print("❌ ERRO:", str(e))
+# =============================
+# ENDPOINT
+# =============================
+@app.route("/all", methods=["GET"])
+def get_all():
+    result = buscar_todas_vendas()
+    return jsonify(result)
 
-        return {
-            "total_itens": 0,
-            "itens": [],
-            "erro": str(e)
-        }
+# =============================
+# START
+# =============================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
