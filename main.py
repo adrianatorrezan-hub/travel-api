@@ -3,11 +3,12 @@ import re
 import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from requests.auth import HTTPBasicAuth
 
-# 🔥 ESSA LINHA É CRÍTICA (resolve erro do Render)
+# 🔥 ESSENCIAL pro Render
 app = FastAPI()
 
-# 🔓 libera acesso do Lovable
+# 🔓 liberar acesso do frontend (Lovable)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,11 +17,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔗 API da Armac
 BASE_URL = "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com/api/armac/vendas"
+
+# 🔐 BASIC AUTH (SEU CASO)
+AUTH = HTTPBasicAuth("admin", "Armac2025@Secure")
 
 
 # =========================
-# 🔍 extrai total de páginas
+# extrair total de páginas
 # =========================
 def extrair_total_paginas(message):
     match = re.search(r"Page\s+\d+\s+of\s+(\d+)", message or "")
@@ -30,7 +35,7 @@ def extrair_total_paginas(message):
 
 
 # =========================
-# 🩺 health check
+# health check
 # =========================
 @app.get("/")
 def home():
@@ -38,7 +43,7 @@ def home():
 
 
 # =========================
-# 🚀 endpoint principal (TUDO)
+# endpoint principal (TUDO)
 # =========================
 @app.get("/all")
 def get_all_vendas():
@@ -53,43 +58,48 @@ def get_all_vendas():
         while True:
             url = f"{BASE_URL}?page={page}&pageSize={page_size}"
 
-            response = requests.get(url, timeout=30)
+            response = requests.get(
+                url,
+                auth=AUTH,   # 🔥 AQUI resolve o 401
+                timeout=30
+            )
+
             response.raise_for_status()
 
             data = response.json()
 
-            # descobre total de páginas na primeira chamada
+            # descobre total páginas
             if total_paginas is None:
                 total_paginas = extrair_total_paginas(data.get("message", ""))
 
             vendas = data.get("data", [])
 
-            # 🔥 progresso
+            # progresso
             if total_paginas:
                 print(f"📄 Página {page}/{total_paginas}")
             else:
                 print(f"📄 Página {page}")
 
             if not vendas:
-                print("⚠️ Nenhum dado retornado")
+                print("⚠️ Sem dados")
                 break
 
             todas_vendas.extend(vendas)
 
-            # chegou na última página
+            # última página
             if total_paginas and page >= total_paginas:
-                print("🏁 Última página alcançada")
+                print("🏁 Fim (total páginas)")
                 break
 
-            # fallback
+            # fallback segurança
             if len(vendas) < page_size:
-                print("🏁 Última página (fallback)")
+                print("🏁 Fim (fallback)")
                 break
 
             page += 1
             time.sleep(0.2)
 
-        print(f"\n✅ TOTAL FINAL: {len(todas_vendas)} registros\n")
+        print(f"\n✅ TOTAL: {len(todas_vendas)} registros\n")
 
         return {
             "total_itens": len(todas_vendas),
