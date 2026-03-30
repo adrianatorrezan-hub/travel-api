@@ -1,196 +1,73 @@
-import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
-
 import requests
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import time
 
-app = FastAPI(title="Armac Travel API")
-
-# =========================
-# 🔥 CORS
-# =========================
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# =========================
-# 🔧 CONFIG
-# =========================
-
-FLYTOUR_BASE_URL = os.getenv(
-    "FLYTOUR_BASE_URL",
-    "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
-)
-
-AUTH = (
-    os.getenv("FLYTOUR_USER", "admin"),
-    os.getenv("FLYTOUR_PASS", "Armac2025@Secure"),
-)
-
-REQUEST_TIMEOUT = 30
+BASE_URL = "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com/api/armac/vendas"
 
 
-# =========================
-# 🧠 HELPERS
-# =========================
-
-def safe_float(v: Any) -> float:
-    try:
-        if v in (None, "", "null"):
-            return 0.0
-
-        valor = float(str(v).replace(",", "."))
-
-        # corrige centavos
-        if valor > 10000:
-            valor = valor / 100
-
-        return valor
-    except:
-        return 0.0
-
-
-def parse_date(date_str: Optional[str]) -> Optional[str]:
-    try:
-        if not date_str:
-            return None
-        return datetime.fromisoformat(str(date_str).replace("Z", "")).isoformat()
-    except:
-        return None
-
-
-# =========================
-# 🔥 BUSCA POR PERÍODO (SEM IDV)
-# =========================
-
-def get_vendas_por_periodo() -> Dict[str, Any]:
-    url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
-
-    all_data = []
+def buscar_todas_vendas():
     page = 1
-    page_size = 100
+    page_size = 50
+    todas_vendas = []
 
-    # 🔥 AJUSTE O PERÍODO AQUI
-    data_inicio = "2024-01-01"
-    data_fim = "2025-12-31"
+    print("🚀 Iniciando coleta de dados da API...\n")
 
     while True:
-        params = {
-            "page": page,
-            "pageSize": page_size,
-            "dataInicio": data_inicio,
-            "dataFim": data_fim
-        }
-
         try:
-            r = requests.get(
-                url,
-                auth=AUTH,
-                params=params,
-                timeout=REQUEST_TIMEOUT
-            )
+            url = f"{BASE_URL}?page={page}&pageSize={page_size}"
+            print(f"📄 Buscando página {page}...")
 
-            r.raise_for_status()
-            data = r.json()
+            response = requests.get(url, timeout=30)
 
-            if isinstance(data, dict) and "data" in data:
-                items = data["data"]
-            elif isinstance(data, list):
-                items = data
-            else:
-                items = []
-
-            if not items:
+            if response.status_code != 200:
+                print(f"❌ Erro HTTP {response.status_code}")
                 break
 
-            print(f"📄 Página {page}: {len(items)} registros")
+            json_data = response.json()
 
-            all_data.extend(items)
+            # Estrutura da API
+            vendas = json_data.get("data", [])
 
-            if len(items) < page_size:
+            if not vendas:
+                print("⚠️ Nenhum dado retornado. Encerrando...")
+                break
+
+            todas_vendas.extend(vendas)
+
+            print(f"✔ {len(vendas)} registros recebidos (Total acumulado: {len(todas_vendas)})")
+
+            # Se veio menos que o limite → última página
+            if len(vendas) < page_size:
+                print("\n🏁 Última página alcançada.")
                 break
 
             page += 1
 
+            # Pequeno delay para não sobrecarregar API
+            time.sleep(0.5)
+
         except Exception as e:
-            print("❌ ERRO FLYTOUR:", str(e))
+            print(f"❌ Erro inesperado: {e}")
             break
 
-    print(f"✅ TOTAL FINAL: {len(all_data)} registros")
-
-    return {"data": all_data}
-
-
-# =========================
-# 🔥 NORMALIZAÇÃO
-# =========================
-
-def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
-
-    preco = (
-        safe_float(item.get("valorTotal"))
-        or safe_float(item.get("tarifaTotal"))
-        or safe_float(item.get("valor"))
-        or safe_float(item.get("tarifa"))
-        or 0.0
-    )
-
-    tipo = item.get("codigoProduto")
-
-    data_evento = parse_date(
-        item.get("dtInicioServicos")
-        or item.get("dataLancamento")
-        or item.get("dtCriacao")
-    )
-
-    return {
-        "tipo": tipo,
-        "viajante": item.get("passageiro"),
-        "aprovador": item.get("solicitante"),
-        "departamento": item.get("nomeFantasiaCliente"),
-        "registro_venda": item.get("numeroVenda"),
-        "preco_total": preco,
-        "data_evento": data_evento,
-    }
+    print(f"\n✅ Total final coletado: {len(todas_vendas)} vendas\n")
+    return todas_vendas
 
 
-# =========================
-# 🔥 PROCESSAMENTO FINAL
-# =========================
-
-def process_all():
-    vendas = get_vendas_por_periodo()
-
-    itens = []
-
-    for raw in vendas.get("data", []):
-        if not isinstance(raw, dict):
-            continue
-
-        itens.append(normalize_item(raw))
-
-    return {
-        "total_itens": len(itens),
-        "itens": itens
-    }
+def salvar_em_json(dados, arquivo="vendas.json"):
+    import json
+    with open(arquivo, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=2)
+    print(f"💾 Dados salvos em {arquivo}")
 
 
-# =========================
-# 🚀 ENDPOINTS
-# =========================
+def main():
+    vendas = buscar_todas_vendas()
 
-@app.get("/")
-def root():
-    return {"status": "API online"}
+    if vendas:
+        salvar_em_json(vendas)
+    else:
+        print("⚠️ Nenhum dado foi coletado.")
 
 
-@app.get("/all")
-def get_all():
-    return process_all()
+if __name__ == "__main__":
+    main()
