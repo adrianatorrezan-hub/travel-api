@@ -33,7 +33,9 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-REQUEST_TIMEOUT = 60  # 🔥 aumentado
+
+# 🔥 importante pra evitar 502
+REQUEST_TIMEOUT = 20
 
 # =========================
 # HELPERS
@@ -69,7 +71,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR (PAGINAÇÃO COMPLETA)
+# 🔥 FLYTOUR (ANTI-502)
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -120,7 +122,9 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
         except Exception as e:
             print("❌ ERRO FLYTOUR:", str(e))
-            break
+
+            # 🔥 NÃO quebra mais a API
+            return {"data": []}
 
     print(f"✅ TOTAL FINAL: {len(all_data)} registros")
 
@@ -128,7 +132,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 
 # =========================
-# 🔥 NORMALIZAÇÃO FINAL
+# 🔥 NORMALIZAÇÃO
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,9 +156,9 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         categoria = "carro"
     elif "hotel" in descricao:
         categoria = "hotel"
-    elif any(x in descricao for x in ["carro", "locacao", "locadora"]):
+    elif any(x in descricao for x in ["carro", "locacao"]):
         categoria = "carro"
-    elif any(x in descricao for x in ["aereo", "voo", "flight"]):
+    elif any(x in descricao for x in ["aereo", "voo"]):
         categoria = "aereo"
     else:
         categoria = "outros"
@@ -177,22 +181,9 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
             d2 = datetime.fromisoformat(dt_fim)
             dias = max((d2 - d1).days, 1)
     except:
-        dias = 1
+        pass
 
     diaria = round(preco / dias, 2) if dias else preco
-
-    faturas = (
-        item.get("faturas") or
-        item.get("numeroFatura") or
-        item.get("fatura") or
-        item.get("numFatura") or
-        None
-    )
-
-    if isinstance(faturas, list):
-        faturas = ", ".join([str(f) for f in faturas if f])
-    elif isinstance(faturas, dict):
-        faturas = str(faturas)
 
     numero_venda = (
         item.get("numeroVenda") or
@@ -212,9 +203,6 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "data_lancamento": data_lancamento,
         "dt_inicio_servico": dt_inicio,
         "dt_fim_servico": dt_fim,
-        "checkin": dt_inicio,
-        "checkout": dt_fim,
-        "faturas": faturas,
         "dias": dias
     }
 
@@ -224,15 +212,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 # =========================
 
 def process_single_idv(idv: str):
-    try:
-        vendas = get_vendas(idv)
-    except Exception:
-        return {
-            "idv": idv,
-            "total_itens": 0,
-            "itens": [],
-            "erro": "Erro ao buscar dados da Flytour"
-        }
+    vendas = get_vendas(idv)
 
     itens = []
     data = vendas.get("data", [])
