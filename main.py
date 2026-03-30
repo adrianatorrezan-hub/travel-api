@@ -1,18 +1,15 @@
-import json
 import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
-
 import requests
-from fastapi import FastAPI, Query
+from typing import Any, Dict, List
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# 🔥 CORS
+# 🔥 CORS (ESSENCIAL)
 # =========================
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,168 +19,138 @@ app.add_middleware(
 )
 
 # =========================
-# CONFIG
+# 🔧 CONFIG
 # =========================
-
 FLYTOUR_BASE_URL = os.getenv(
     "FLYTOUR_BASE_URL",
-    "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
+    "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com"
 )
 
 FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 20
 
 # =========================
-# HELPERS
+# 🧰 HELPERS
 # =========================
-
 def safe_float(v: Any) -> float:
     try:
         return float(v) if v not in (None, "") else 0.0
     except:
         return 0.0
 
-def safe_int(v: Any) -> int:
-    try:
-        return int(float(v)) if v not in (None, "") else 0
-    except:
-        return 0
-
-def calc_unit_price(total: float, qty: int) -> float:
-    return round(total / qty, 2) if qty else total
-
-def split_ids(ids: str) -> List[str]:
-    return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# 🔥 FLYTOUR
+# 🔄 BUSCAR TODAS AS VENDAS (PAGINAÇÃO REAL)
 # =========================
+def fetch_all_vendas(idv: str) -> List[Dict]:
+    all_data = []
+    page = 1
 
-def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
-    url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
+    while True:
+        url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
+        params = {
+            "idvExterno": idv,
+            "page": page
+        }
 
-    params = {}
-    if idv:
-        params["idvExterno"] = idv
+        resp = requests.get(url, params=params, auth=AUTH, timeout=REQUEST_TIMEOUT)
 
-    try:
-        r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+        if resp.status_code != 200:
+            print("Erro API:", resp.text)
+            break
 
-        print("\n===== DEBUG FLYTOUR =====")
-        print(data)
+        json_data = resp.json()
+        data = json_data.get("data", [])
 
-        # padrão correto
-        if isinstance(data, dict) and "data" in data:
-            return {"data": data["data"]}
+        if not data:
+            break
 
-        # fallback
-        if isinstance(data, list):
-            return {"data": data}
+        all_data.extend(data)
 
-        return {"data": []}
+        if len(data) < 50:
+            break
 
-    except Exception as e:
-        print("ERRO FLYTOUR:", str(e))
-        return {"data": []}
+        page += 1
 
-# =========================
-# 🔥 NORMALIZAÇÃO (SEM ERRO)
-# =========================
+    return all_data
 
-def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-
-    # 🔥 pega qualquer valor possível
-    preco = (
-        safe_float(item.get("tarifa")) or
-        safe_float(item.get("valorTotal")) or
-        safe_float(item.get("valor")) or
-        0
-    )
-
-    if preco == 0:
-        return None
-
-    return {
-        "type": item.get("codigoProduto", "outros"),
-        "fornecedor": item.get("nomeFornecedor"),
-        "categoria": item.get("classe") or item.get("categoriaHotel"),
-        "preco_total": preco,
-        "preco_unitario": preco,
-        "origem": item.get("origemRotaAereo"),
-        "destino": item.get("destinoRotaAereo"),
-        "rota": item.get("rotaResumida"),
-        "data": item.get("dtInicioServicos"),
-    }
 
 # =========================
-# PROCESSAMENTO
+# 📊 ENDPOINT PRINCIPAL
 # =========================
+@app.get("/compare/{idv}")
+def compare(idv: str):
 
-def process_single_idv(idv: str):
-    vendas = get_vendas(idv)
+    vendas = fetch_all_vendas(idv)
 
-    itens = []
-    data = vendas.get("data", [])
+    items = []
 
-    # 🔥 GARANTE LISTA REAL
-    if isinstance(data, dict):
-        data = list(data.values())
+    for v in vendas:
+        item = {
+            "tipo": "flight",
+            "viajante": v.get("passageiro"),
+            "aprovador": v.get("solicitante"),
+            "departamento": v.get("ccustosCliente"),
+            "flytour": {
+                "type": "flight",
+                "fornecedor": v.get("nomeFornecedor")
+            },
+            "categoria": None,
+            "preco_total": safe_float(v.get("tarifa")),
+            "preco_unitario": safe_float(v.get("tarifa")),
+            "origem": v.get("origemRotaAereo"),
+            "destino": v.get("destinoRotaAereo"),
+            "rota": v.get("rotaResumida"),
+            "data": v.get("dataLancamento")
+        }
 
-    if not isinstance(data, list):
-        data = []
-
-    for raw in data:
-
-        if not isinstance(raw, dict):
-            continue
-
-        contract_item = normalize_item(raw)
-
-        if not contract_item:
-            continue
-
-        itens.append({
-            "tipo": contract_item["type"],
-            "viajante": raw.get("passageiro"),
-            "aprovador": raw.get("solicitante"),
-            "departamento": raw.get("nomeFantasiaCliente"),
-            "flytour": contract_item
-        })
+        items.append(item)
 
     return {
         "idv": idv,
-        "total_itens": len(itens),
-        "itens": itens
+        "total_items": len(items),
+        "items": items
     }
 
-# =========================
-# ENDPOINTS
-# =========================
 
+# =========================
+# 📈 HISTÓRICO (NOVO)
+# =========================
+@app.get("/historico/{idv}")
+def historico(idv: str):
+
+    vendas = fetch_all_vendas(idv)
+
+    historico = {}
+
+    for v in vendas:
+        data = v.get("dataLancamento")
+        valor = safe_float(v.get("tarifa"))
+
+        if not data:
+            continue
+
+        dia = data[:10]
+
+        if dia not in historico:
+            historico[dia] = {
+                "data": dia,
+                "gasto": 0.0,
+                "quantidade": 0
+            }
+
+        historico[dia]["gasto"] += valor
+        historico[dia]["quantidade"] += 1
+
+    return sorted(historico.values(), key=lambda x: x["data"])
+
+
+# =========================
+# ❤️ HEALTH CHECK
+# =========================
 @app.get("/")
 def root():
     return {"status": "API online"}
-
-@app.get("/compare/{idv}")
-def compare_one(idv: str):
-    return process_single_idv(idv)
-
-@app.get("/compare")
-def compare_many(ids: str = Query(...)):
-    return {
-        "resultados": [process_single_idv(i) for i in split_ids(ids)]
-    }
-
-@app.get("/feed")
-def feed(ids: Optional[str] = None):
-    id_list = split_ids(ids) if ids else ["1169902"]
-
-    return {
-        "resultados": [process_single_idv(i) for i in id_list]
-    }
