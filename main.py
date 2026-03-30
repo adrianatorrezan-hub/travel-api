@@ -33,10 +33,7 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-
-# 🔥 AUMENTADO (evita timeout)
-REQUEST_TIMEOUT = 60
-
+REQUEST_TIMEOUT = 60  # 🔥 aumentado
 
 # =========================
 # HELPERS
@@ -123,7 +120,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
         except Exception as e:
             print("❌ ERRO FLYTOUR:", str(e))
-            return {"data": []}  # 🔥 evita quebrar API
+            break
 
     print(f"✅ TOTAL FINAL: {len(all_data)} registros")
 
@@ -229,41 +226,40 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def process_single_idv(idv: str):
     try:
         vendas = get_vendas(idv)
-
-        itens = []
-        data = vendas.get("data", [])
-
-        if isinstance(data, dict):
-            data = list(data.values())
-
-        for raw in data:
-            if not isinstance(raw, dict):
-                continue
-
-            item = normalize_item(raw)
-
-            itens.append({
-                "tipo": item["type"],
-                "viajante": raw.get("passageiro"),
-                "aprovador": raw.get("solicitante"),
-                "departamento": raw.get("nomeFantasiaCliente"),
-                "registro_venda": item.get("numero_venda"),
-                "flytour": item
-            })
-
-        return {
-            "idv": idv,
-            "total_itens": len(itens),
-            "itens": itens
-        }
-
-    except Exception as e:
+    except Exception:
         return {
             "idv": idv,
             "total_itens": 0,
             "itens": [],
-            "erro": str(e)
+            "erro": "Erro ao buscar dados da Flytour"
         }
+
+    itens = []
+    data = vendas.get("data", [])
+
+    if isinstance(data, dict):
+        data = list(data.values())
+
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+
+        item = normalize_item(raw)
+
+        itens.append({
+            "tipo": item["type"],
+            "viajante": raw.get("passageiro"),
+            "aprovador": raw.get("solicitante"),
+            "departamento": raw.get("nomeFantasiaCliente"),
+            "registro_venda": item.get("numero_venda"),
+            "flytour": item
+        })
+
+    return {
+        "idv": idv,
+        "total_itens": len(itens),
+        "itens": itens
+    }
 
 
 # =========================
