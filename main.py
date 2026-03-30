@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# CORS
+# 🔥 CORS
 # =========================
 
 app.add_middleware(
@@ -34,7 +34,8 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-REQUEST_TIMEOUT = 15
+
+REQUEST_TIMEOUT = 20
 
 # =========================
 # HELPERS
@@ -46,33 +47,19 @@ def safe_float(v: Any) -> float:
     except:
         return 0.0
 
-
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
-
 
 def parse_date(date_str: Optional[str]) -> Optional[str]:
     if not date_str:
         return None
-
     try:
-        clean = date_str.replace("Z", "").replace("T", " ")
-        dt = datetime.fromisoformat(clean)
-
-        # 🔥 evita bug de data absurda
-        if dt.year < 2020 or dt.year > 2035:
-            return None
-
-        return dt.isoformat()
+        return datetime.fromisoformat(date_str.replace("Z", "")).isoformat()
     except:
-        try:
-            return datetime.strptime(date_str[:10], "%Y-%m-%d").isoformat()
-        except:
-            return None
-
+        return date_str
 
 # =========================
-# FLYTOUR
+# 🔥 FLYTOUR
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -87,9 +74,6 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         r.raise_for_status()
         data = r.json()
 
-        print("\n===== RAW API =====")
-        print(json.dumps(data, indent=2)[:2000])
-
         if isinstance(data, dict) and "data" in data:
             return {"data": data["data"]}
 
@@ -99,78 +83,47 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
     except Exception as e:
-        print("ERRO FLYTOUR:", str(e))
+        print("❌ ERRO FLYTOUR:", str(e))
         return {"data": []}
 
-
 # =========================
-# NORMALIZAÇÃO FINAL
+# 🔥 NORMALIZAÇÃO FINAL
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
-    # =========================
-    # 🔥 PREÇO ROBUSTO (resolve seu problema principal)
-    # =========================
-
+    # 🔥 DETECÇÃO REAL DE PREÇO (pega QUALQUER campo válido)
     preco = 0
-    for campo in [
-        "tarifa",
-        "valorTotal",
-        "valor",
-        "valorServico",
-        "valorVenda",
-        "preco",
-        "total",
-        "totalGeral",
-    ]:
-        preco = safe_float(item.get(campo))
-        if preco > 0:
-            break
-
-    print("💰 PREÇO:", preco)
+    for k, v in item.items():
+        valor = safe_float(v)
+        if valor > preco:
+            preco = valor
 
     if preco == 0:
         return None
 
-    # =========================
-    # 🔥 CLASSIFICAÇÃO ROBUSTA
-    # =========================
-
+    # 🔥 TIPO CORRETO
     tipo_raw = str(item.get("codigoProduto", "")).upper()
-    descricao = str(item.get("descricaoProduto", "")).upper()
 
-    if any(x in tipo_raw for x in ["TKT", "AIR"]) or "AEREO" in descricao:
+    if tipo_raw in ["TKT", "AIR", "AEREO"]:
         categoria = "aereo"
-
-    elif any(x in tipo_raw for x in ["HTL", "HOTEL"]) or "HOTEL" in descricao:
+    elif tipo_raw in ["HTL", "HOTEL"]:
         categoria = "hotel"
-
-    elif (
-        any(x in tipo_raw for x in ["CAR", "LOC", "VEI"])
-        or any(x in descricao for x in ["CARRO", "LOCACAO", "VEICULO", "RENTAL"])
-    ):
+    elif tipo_raw in ["CAR", "LOC", "CARRO"]:
         categoria = "carro"
-
     else:
         categoria = "outros"
 
-    # =========================
-    # 🔥 DATAS CORRIGIDAS
-    # =========================
-
+    # 🔥 DATAS CORRETAS (sem bug de 2025)
+    checkin = parse_date(item.get("dtInicioServicos"))
+    checkout = parse_date(item.get("dtFimServicos"))
     data_compra = parse_date(item.get("dtCriacao") or item.get("dataCriacao"))
     data_aprovacao = parse_date(item.get("dtAprovacao") or item.get("dataAprovacao"))
 
-    checkin = parse_date(item.get("dtInicioServicos"))
-    checkout = parse_date(item.get("dtFimServicos"))
-
+    # 🔥 DATA PRINCIPAL
     data_evento = checkin or data_compra or data_aprovacao
 
-    # =========================
     # 🔥 DIAS
-    # =========================
-
     dias = 1
     try:
         if checkin and checkout:
@@ -180,12 +133,9 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except:
         dias = 1
 
-    diaria = round(preco / dias, 2) if dias else preco
+    diaria = round(preco / dias, 2)
 
-    # =========================
     # 🔥 POLÍTICA
-    # =========================
-
     politica = "dentro"
     motivo = None
 
@@ -196,10 +146,6 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if categoria == "aereo" and preco > 2000:
         politica = "fora"
         motivo = "Passagem acima de R$2000"
-
-    print(
-        f"TIPO={tipo_raw} | CAT={categoria} | DATA={data_evento}"
-    )
 
     return {
         "type": categoria,
@@ -213,18 +159,18 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "destino": item.get("destinoRotaAereo"),
         "rota": item.get("rotaResumida"),
 
-        "data_compra": data_compra,
-        "data_aprovacao": data_aprovacao,
+        "data": data_evento,
+        "data_evento": data_evento,
+
         "checkin": checkin,
         "checkout": checkout,
-
-        "data": data_evento,
+        "data_compra": data_compra,
+        "data_aprovacao": data_aprovacao,
 
         "dias": dias,
         "politica": politica,
-        "motivo": motivo,
+        "motivo": motivo
     }
-
 
 # =========================
 # PROCESSAMENTO
@@ -247,18 +193,17 @@ def process_single_idv(idv: str):
         if not isinstance(raw, dict):
             continue
 
-        item = normalize_item(raw)
+        contract_item = normalize_item(raw)
 
-        if not item:
+        if not contract_item:
             continue
 
         itens.append({
-            "tipo": item["type"],
+            "tipo": contract_item["type"],
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
-            "data_evento": item["data"],
-            "flytour": item
+            "flytour": contract_item
         })
 
     return {
@@ -266,7 +211,6 @@ def process_single_idv(idv: str):
         "total_itens": len(itens),
         "itens": itens
     }
-
 
 # =========================
 # ENDPOINTS
@@ -276,18 +220,15 @@ def process_single_idv(idv: str):
 def root():
     return {"status": "API online"}
 
-
 @app.get("/compare/{idv}")
 def compare_one(idv: str):
     return process_single_idv(idv)
-
 
 @app.get("/compare")
 def compare_many(ids: str = Query(...)):
     return {
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
-
 
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
