@@ -69,8 +69,22 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR (PAGINAÇÃO CORRETA)
+# 🔥 FLYTOUR (PAGINAÇÃO + FILTRO FLEXÍVEL)
 # =========================
+
+def match_idv(item: Dict[str, Any], idv: str) -> bool:
+    """Testa todos os possíveis campos de ID"""
+    possible_fields = [
+        item.get("idvExterno"),
+        item.get("idVenda"),
+        item.get("numeroVenda"),
+        item.get("id"),
+        item.get("codigo"),
+        item.get("reserva"),
+    ]
+
+    return str(idv) in [str(x) for x in possible_fields if x]
+
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
@@ -108,10 +122,9 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
             print(f"📄 Página {page}: {len(items)} registros")
 
-            # 🔥 FILTRO CORRETO AQUI (NO PYTHON)
             for item in items:
                 if idv:
-                    if str(item.get("idvExterno")) != str(idv):
+                    if not match_idv(item, idv):
                         continue
                 all_data.append(item)
 
@@ -130,7 +143,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 
 # =========================
-# 🔥 NORMALIZAÇÃO FINAL
+# 🔥 NORMALIZAÇÃO
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -224,6 +237,8 @@ def process_single_idv(idv: str):
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
             "registro_venda": item.get("numero_venda"),
+            "preco_total": item.get("preco_total"),
+            "data_evento": item.get("data_evento"),
             "flytour": item
         })
 
