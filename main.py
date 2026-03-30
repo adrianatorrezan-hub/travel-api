@@ -106,7 +106,6 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if preco == 0:
         return None
 
-    # 🔥 CORREÇÃO REAL (FLYTOUR)
     tipo_raw = str(item.get("codigoProduto", "")).upper()
 
     if tipo_raw in ["TKT", "AIR"]:
@@ -118,14 +117,12 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     else:
         categoria = "outros"
 
-    # 🔥 datas
     data_compra = item.get("dtCriacao") or item.get("dataCriacao")
     data_aprovacao = item.get("dtAprovacao") or item.get("dataAprovacao")
 
     checkin = item.get("dtInicioServicos")
     checkout = item.get("dtFimServicos")
 
-    # 🔥 dias
     dias = 1
     try:
         if checkin and checkout:
@@ -137,7 +134,6 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 política
     politica = "dentro"
     motivo = None
 
@@ -155,18 +151,14 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "categoria": categoria,
         "preco_total": preco,
         "preco_unitario": diaria,
-
         "origem": item.get("origemRotaAereo"),
         "destino": item.get("destinoRotaAereo"),
         "rota": item.get("rotaResumida"),
-
         "data_compra": data_compra,
         "data_aprovacao": data_aprovacao,
         "checkin": checkin,
         "checkout": checkout,
-
         "data": checkin or data_compra,
-
         "dias": dias,
         "politica": politica,
         "motivo": motivo
@@ -211,6 +203,15 @@ def process_single_idv(idv: str):
         "total_itens": len(itens),
         "itens": itens
     }
+
+# =========================
+# 📊 HISTÓRICO (NOVO - CORRIGE SEU ERRO)
+# =========================
+
+@app.get("/historico/{idv}")
+def historico(idv: str):
+    resultado = process_single_idv(idv)
+    return resultado
 
 # =========================
 # ENDPOINTS
