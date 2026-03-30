@@ -33,7 +33,7 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-REQUEST_TIMEOUT = 60  # 🔥 aumentado
+REQUEST_TIMEOUT = 60
 
 
 # =========================
@@ -69,7 +69,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR (ROBUSTO)
+# 🔥 FLYTOUR (PAGINAÇÃO CORRETA)
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -78,16 +78,12 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     all_data = []
     page = 1
     page_size = 100
-    retries = 3
 
     while True:
         params = {
             "page": page,
             "pageSize": page_size
         }
-
-        if idv:
-            params["idvExterno"] = idv
 
         try:
             r = requests.get(
@@ -110,9 +106,14 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
             if not items:
                 break
 
-            all_data.extend(items)
-
             print(f"📄 Página {page}: {len(items)} registros")
+
+            # 🔥 FILTRO CORRETO AQUI (NO PYTHON)
+            for item in items:
+                if idv:
+                    if str(item.get("idvExterno")) != str(idv):
+                        continue
+                all_data.append(item)
 
             if len(items) < page_size:
                 break
@@ -121,16 +122,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
         except Exception as e:
             print("❌ ERRO FLYTOUR:", str(e))
-
-            if retries > 0:
-                retries -= 1
-                print("🔁 Tentando novamente...")
-                continue
-
-            return {
-                "error": True,
-                "message": "Erro ao conectar com Flytour"
-            }
+            break
 
     print(f"✅ TOTAL FINAL: {len(all_data)} registros")
 
@@ -138,7 +130,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 
 # =========================
-# 🔥 NORMALIZAÇÃO
+# 🔥 NORMALIZAÇÃO FINAL
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,7 +156,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         categoria = "hotel"
     elif any(x in descricao for x in ["carro", "locacao"]):
         categoria = "carro"
-    elif any(x in descricao for x in ["aereo", "voo"]):
+    elif any(x in descricao for x in ["aereo", "voo", "flight"]):
         categoria = "aereo"
     else:
         categoria = "outros"
@@ -187,7 +179,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
             d2 = datetime.fromisoformat(dt_fim)
             dias = max((d2 - d1).days, 1)
     except:
-        pass
+        dias = 1
 
     diaria = round(preco / dias, 2) if dias else preco
 
@@ -200,10 +192,12 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "type": categoria,
+        "categoria": categoria,
         "numero_venda": numero_venda,
         "preco_total": preco,
         "preco_unitario": diaria,
         "data_evento": data_evento,
+        "data": data_evento,
         "dias": dias
     }
 
@@ -215,22 +209,19 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def process_single_idv(idv: str):
     vendas = get_vendas(idv)
 
-    if vendas.get("error"):
-        return {
-            "idv": idv,
-            "error": True,
-            "message": vendas["message"]
-        }
-
     itens = []
     data = vendas.get("data", [])
 
     for raw in data:
+        if not isinstance(raw, dict):
+            continue
+
         item = normalize_item(raw)
 
         itens.append({
             "tipo": item["type"],
             "viajante": raw.get("passageiro"),
+            "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
             "registro_venda": item.get("numero_venda"),
             "flytour": item
