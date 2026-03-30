@@ -47,15 +47,6 @@ def safe_float(v: Any) -> float:
     except:
         return 0.0
 
-def safe_int(v: Any) -> int:
-    try:
-        return int(float(v)) if v not in (None, "") else 0
-    except:
-        return 0
-
-def calc_unit_price(total: float, qty: int) -> float:
-    return round(total / qty, 2) if qty else total
-
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
@@ -78,8 +69,13 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         print("\n===== DEBUG FLYTOUR =====")
         print(data)
 
-        if isinstance(data, dict) and "data" in data:
-            return {"data": data["data"]}
+        # 🔥 normalização de resposta
+        if isinstance(data, dict):
+            if "data" in data:
+                return {"data": data["data"]}
+            if "itens" in data:
+                return {"data": data["itens"]}
+            return {"data": list(data.values())}
 
         if isinstance(data, list):
             return {"data": data}
@@ -91,7 +87,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# 🔥 NORMALIZAÇÃO (CORRIGIDA)
+# 🔥 NORMALIZAÇÃO (CORRETA)
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -106,6 +102,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if preco == 0:
         return None
 
+    # 🔥 MAPEAMENTO REAL FLYTOUR
     tipo_raw = str(item.get("codigoProduto", "")).upper()
 
     if tipo_raw in ["TKT", "AIR"]:
@@ -117,12 +114,14 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     else:
         categoria = "outros"
 
+    # 🔥 DATAS
     data_compra = item.get("dtCriacao") or item.get("dataCriacao")
     data_aprovacao = item.get("dtAprovacao") or item.get("dataAprovacao")
 
     checkin = item.get("dtInicioServicos")
     checkout = item.get("dtFimServicos")
 
+    # 🔥 DIAS
     dias = 1
     try:
         if checkin and checkout:
@@ -134,6 +133,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
+    # 🔥 POLÍTICA
     politica = "dentro"
     motivo = None
 
@@ -147,18 +147,22 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     return {
         "type": categoria,
-        "fornecedor": item.get("nomeFornecedor"),
         "categoria": categoria,
+        "fornecedor": item.get("nomeFornecedor"),
+
         "preco_total": preco,
         "preco_unitario": diaria,
+
         "origem": item.get("origemRotaAereo"),
         "destino": item.get("destinoRotaAereo"),
         "rota": item.get("rotaResumida"),
+
         "data_compra": data_compra,
         "data_aprovacao": data_aprovacao,
         "checkin": checkin,
         "checkout": checkout,
         "data": checkin or data_compra,
+
         "dias": dias,
         "politica": politica,
         "motivo": motivo
@@ -181,7 +185,6 @@ def process_single_idv(idv: str):
         data = []
 
     for raw in data:
-
         if not isinstance(raw, dict):
             continue
 
@@ -191,27 +194,20 @@ def process_single_idv(idv: str):
             continue
 
         itens.append({
-            "tipo": contract_item["type"],
+            "tipo": contract_item["type"],  # 🔥 ESSENCIAL PARA FRONT
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
             "flytour": contract_item
         })
 
+    print(f"IDV {idv} -> {len(itens)} itens processados")
+
     return {
         "idv": idv,
         "total_itens": len(itens),
         "itens": itens
     }
-
-# =========================
-# 📊 HISTÓRICO (NOVO - CORRIGE SEU ERRO)
-# =========================
-
-@app.get("/historico/{idv}")
-def historico(idv: str):
-    resultado = process_single_idv(idv)
-    return resultado
 
 # =========================
 # ENDPOINTS
@@ -231,6 +227,16 @@ def compare_many(ids: str = Query(...)):
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
 
+# 🔥 ENDPOINT PRINCIPAL DO LOVABLE
+@app.get("/historico/{idv}")
+def historico(idv: str):
+    resultado = process_single_idv(idv)
+
+    return {
+        "itens": resultado["itens"]  # 🔥 CRÍTICO
+    }
+
+# 🔥 FEED PADRÃO
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
     id_list = split_ids(ids) if ids else ["1169902"]
