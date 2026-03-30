@@ -53,6 +53,9 @@ def safe_int(v: Any) -> int:
     except:
         return 0
 
+def calc_unit_price(total: float, qty: int) -> float:
+    return round(total / qty, 2) if qty else total
+
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
@@ -88,7 +91,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# 🔥 NORMALIZAÇÃO (FIX NULL)
+# 🔥 NORMALIZAÇÃO (ENRIQUECIDA)
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -103,16 +106,71 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if preco == 0:
         return None
 
+    tipo_raw = str(item.get("codigoProduto", "")).lower()
+
+    # 🔥 categoria inteligente
+    categoria = "outros"
+    if "aereo" in tipo_raw or "flight" in tipo_raw:
+        categoria = "aereo"
+    elif "hotel" in tipo_raw:
+        categoria = "hotel"
+    elif "carro" in tipo_raw:
+        categoria = "carro"
+
+    # 🔥 datas completas
+    data_compra = item.get("dtCriacao") or item.get("dataCriacao")
+    data_aprovacao = item.get("dtAprovacao") or item.get("dataAprovacao")
+
+    checkin = item.get("dtInicioServicos")
+    checkout = item.get("dtFimServicos")
+
+    # 🔥 cálculo de dias
+    dias = 1
+    try:
+        if checkin and checkout:
+            d1 = datetime.fromisoformat(checkin.replace("Z", ""))
+            d2 = datetime.fromisoformat(checkout.replace("Z", ""))
+            dias = max((d2 - d1).days, 1)
+    except:
+        dias = 1
+
+    diaria = round(preco / dias, 2) if dias else preco
+
+    # 🔥 política simples
+    politica = "dentro"
+    motivo = None
+
+    if categoria == "hotel" and diaria > 500:
+        politica = "fora"
+        motivo = "Diária acima de R$500"
+
+    if categoria == "aereo" and preco > 2000:
+        politica = "fora"
+        motivo = "Passagem acima de R$2000"
+
     return {
-        "type": item.get("codigoProduto") or "outros",
-        "fornecedor": item.get("nomeFornecedor") or "N/A",
-        "categoria": item.get("classe") or item.get("categoriaHotel") or "N/A",
+        "type": categoria,
+        "fornecedor": item.get("nomeFornecedor"),
+        "categoria": categoria,
         "preco_total": preco,
-        "preco_unitario": preco,
-        "origem": item.get("origemRotaAereo") or "",
-        "destino": item.get("destinoRotaAereo") or "",
-        "rota": item.get("rotaResumida") or "",
-        "data": item.get("dtInicioServicos") or item.get("dataLancamento"),
+        "preco_unitario": diaria,
+
+        "origem": item.get("origemRotaAereo"),
+        "destino": item.get("destinoRotaAereo"),
+        "rota": item.get("rotaResumida"),
+
+        # 🔥 TODAS AS DATAS
+        "data_compra": data_compra,
+        "data_aprovacao": data_aprovacao,
+        "checkin": checkin,
+        "checkout": checkout,
+
+        # 🔥 data principal para gráfico
+        "data": checkin or data_compra,
+
+        "dias": dias,
+        "politica": politica,
+        "motivo": motivo
     }
 
 # =========================
@@ -143,9 +201,9 @@ def process_single_idv(idv: str):
 
         itens.append({
             "tipo": contract_item["type"],
-            "viajante": raw.get("passageiro") or "N/A",
-            "aprovador": raw.get("solicitante") or "N/A",
-            "departamento": raw.get("nomeFantasiaCliente") or "N/A",
+            "viajante": raw.get("passageiro"),
+            "aprovador": raw.get("solicitante"),
+            "departamento": raw.get("nomeFantasiaCliente"),
             "flytour": contract_item
         })
 
@@ -154,43 +212,6 @@ def process_single_idv(idv: str):
         "total_itens": len(itens),
         "itens": itens
     }
-
-# =========================
-# 📈 HISTÓRICO (NOVO)
-# =========================
-
-def build_historico(idv: str):
-    vendas = get_vendas(idv)
-
-    historico = {}
-    data = vendas.get("data", [])
-
-    if not isinstance(data, list):
-        data = []
-
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-
-        data_str = item.get("dtInicioServicos") or item.get("dataLancamento")
-        valor = safe_float(item.get("tarifa"))
-
-        if not data_str:
-            continue
-
-        dia = data_str[:10]
-
-        if dia not in historico:
-            historico[dia] = {
-                "data": dia,
-                "gasto": 0.0,
-                "quantidade": 0
-            }
-
-        historico[dia]["gasto"] += valor
-        historico[dia]["quantidade"] += 1
-
-    return sorted(historico.values(), key=lambda x: x["data"])
 
 # =========================
 # ENDPOINTS
@@ -217,7 +238,3 @@ def feed(ids: Optional[str] = None):
     return {
         "resultados": [process_single_idv(i) for i in id_list]
     }
-
-@app.get("/historico/{idv}")
-def historico(idv: str):
-    return build_historico(idv)
