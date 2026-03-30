@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 # =========================
-# 🔧 CONFIG
+# CONFIG
 # =========================
 FLYTOUR_BASE_URL = os.getenv(
     "FLYTOUR_BASE_URL",
@@ -32,8 +32,9 @@ FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 REQUEST_TIMEOUT = 20
 
+
 # =========================
-# 🧰 HELPERS
+# HELPERS
 # =========================
 def safe_float(v: Any) -> float:
     try:
@@ -43,53 +44,38 @@ def safe_float(v: Any) -> float:
 
 
 # =========================
-# 🔄 BUSCAR TODAS AS VENDAS (PAGINAÇÃO REAL)
+# 🔄 BUSCAR VENDAS (SIMPLES E ESTÁVEL)
 # =========================
-def fetch_all_vendas(idv: str) -> List[Dict]:
-    all_data = []
-    page = 1
+def fetch_vendas(idv: str) -> List[Dict]:
+    url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
-    while True:
-        url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
-        params = {
-            "idvExterno": idv,
-            "page": page
-        }
+    params = {
+        "idvExterno": idv
+    }
 
-        resp = requests.get(url, params=params, auth=AUTH, timeout=REQUEST_TIMEOUT)
+    resp = requests.get(url, params=params, auth=AUTH, timeout=REQUEST_TIMEOUT)
 
-        if resp.status_code != 200:
-            print("Erro API:", resp.text)
-            break
+    if resp.status_code != 200:
+        print("Erro API:", resp.text)
+        return []
 
-        json_data = resp.json()
-        data = json_data.get("data", [])
+    json_data = resp.json()
 
-        if not data:
-            break
-
-        all_data.extend(data)
-
-        if len(data) < 50:
-            break
-
-        page += 1
-
-    return all_data
+    return json_data.get("data", [])
 
 
 # =========================
-# 📊 ENDPOINT PRINCIPAL
+# ENDPOINT PRINCIPAL
 # =========================
 @app.get("/compare/{idv}")
 def compare(idv: str):
 
-    vendas = fetch_all_vendas(idv)
+    vendas = fetch_vendas(idv)
 
     items = []
 
     for v in vendas:
-        item = {
+        items.append({
             "tipo": "flight",
             "viajante": v.get("passageiro"),
             "aprovador": v.get("solicitante"),
@@ -105,9 +91,7 @@ def compare(idv: str):
             "destino": v.get("destinoRotaAereo"),
             "rota": v.get("rotaResumida"),
             "data": v.get("dataLancamento")
-        }
-
-        items.append(item)
+        })
 
     return {
         "idv": idv,
@@ -117,12 +101,12 @@ def compare(idv: str):
 
 
 # =========================
-# 📈 HISTÓRICO (NOVO)
+# HISTÓRICO
 # =========================
 @app.get("/historico/{idv}")
 def historico(idv: str):
 
-    vendas = fetch_all_vendas(idv)
+    vendas = fetch_vendas(idv)
 
     historico = {}
 
@@ -149,7 +133,7 @@ def historico(idv: str):
 
 
 # =========================
-# ❤️ HEALTH CHECK
+# HEALTH CHECK
 # =========================
 @app.get("/")
 def root():
