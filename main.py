@@ -29,10 +29,10 @@ FLYTOUR_BASE_URL = os.getenv(
     "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com",
 )
 
-AUTH = (
-    os.getenv("FLYTOUR_USER", "admin"),
-    os.getenv("FLYTOUR_PASS", "Armac2025@Secure"),
-)
+FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
+FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
+
+AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 
 REQUEST_TIMEOUT = 30
 
@@ -45,9 +45,12 @@ def safe_float(v: Any) -> float:
     try:
         if v in (None, "", "null"):
             return 0.0
+
         valor = float(str(v).replace(",", "."))
+
         if valor > 10000:
             valor = valor / 100
+
         return valor
     except:
         return 0.0
@@ -62,54 +65,55 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
         return None
 
 
-def match_idv(item: Dict[str, Any], idv: str) -> bool:
-    return str(idv) in [
-        str(item.get("idvExterno")),
-        str(item.get("idVenda")),
-        str(item.get("numeroVenda")),
-        str(item.get("id")),
-        str(item.get("codigo")),
-        str(item.get("reserva")),
-    ]
+def split_ids(ids: str) -> List[str]:
+    return [x.strip() for x in ids.split(",") if x.strip()]
 
 
 # =========================
-# 🔥 BUSCA (2 MODOS)
+# FLYTOUR (PAGINAÇÃO)
 # =========================
 
-def get_vendas(idv: Optional[str] = None, full: bool = False):
+def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
     all_data = []
     page = 1
     page_size = 100
 
-    # 🔥 diferença aqui
-    max_pages = 999 if full else 10
-
     while True:
-        if page > max_pages:
-            break
+        params = {
+            "page": page,
+            "pageSize": page_size
+        }
 
-        params = {"page": page, "pageSize": page_size}
+        # 🔒 mantém seu filtro atual (sem mexer)
+        if idv:
+            params["idvExterno"] = idv
 
         try:
-            r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
+            r = requests.get(
+                url,
+                auth=AUTH,
+                params=params,
+                timeout=REQUEST_TIMEOUT
+            )
+
             r.raise_for_status()
             data = r.json()
 
-            items = data.get("data") if isinstance(data, dict) else data
+            if isinstance(data, dict) and "data" in data:
+                items = data["data"]
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = []
 
             if not items:
                 break
 
-            print(f"📄 Página {page}: {len(items)}")
+            print(f"📄 Página {page}: {len(items)} registros")
 
-            for item in items:
-                if idv:
-                    if not match_idv(item, idv):
-                        continue
-                all_data.append(item)
+            all_data.extend(items)
 
             if len(items) < page_size:
                 break
@@ -117,10 +121,11 @@ def get_vendas(idv: Optional[str] = None, full: bool = False):
             page += 1
 
         except Exception as e:
-            print("❌ ERRO:", str(e))
+            print("❌ ERRO FLYTOUR:", str(e))
             break
 
-    print(f"✅ TOTAL: {len(all_data)}")
+    print(f"✅ TOTAL FINAL: {len(all_data)} registros")
+
     return {"data": all_data}
 
 
@@ -128,15 +133,26 @@ def get_vendas(idv: Optional[str] = None, full: bool = False):
 # NORMALIZAÇÃO
 # =========================
 
-def normalize_item(item: Dict[str, Any]):
+def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     preco = (
-        safe_float(item.get("valorTotal"))
-        or safe_float(item.get("tarifaTotal"))
-        or safe_float(item.get("valor"))
-        or safe_float(item.get("tarifa"))
-        or 0.0
+        safe_float(item.get("valorTotal")) or
+        safe_float(item.get("tarifaTotal")) or
+        safe_float(item.get("valor")) or
+        safe_float(item.get("tarifa")) or
+        0.0
     )
+
+    tipo_raw = str(item.get("codigoProduto", "")).upper()
+
+    if tipo_raw in ["TKT", "AIR"]:
+        categoria = "aereo"
+    elif tipo_raw in ["HTL", "HOTEL"]:
+        categoria = "hotel"
+    elif tipo_raw in ["CAR", "LOC"]:
+        categoria = "carro"
+    else:
+        categoria = "outros"
 
     data_evento = parse_date(
         item.get("dtInicioServicos")
@@ -144,11 +160,17 @@ def normalize_item(item: Dict[str, Any]):
         or item.get("dtCriacao")
     )
 
+    numero_venda = (
+        item.get("numeroVenda")
+        or item.get("idVenda")
+        or item.get("id")
+        or item.get("idvExterno")
+    )
+
     return {
-        "tipo": item.get("codigoProduto"),
-        "viajante": item.get("passageiro"),
-        "departamento": item.get("nomeFantasiaCliente"),
-        "registro_venda": item.get("numeroVenda"),
+        "type": categoria,
+        "categoria": categoria,
+        "numero_venda": numero_venda,
         "preco_total": preco,
         "data_evento": data_evento,
     }
@@ -158,14 +180,28 @@ def normalize_item(item: Dict[str, Any]):
 # PROCESSAMENTO
 # =========================
 
-def process(idv: str, full=False):
-    vendas = get_vendas(idv, full=full)
+def process_single_idv(idv: str):
+    vendas = get_vendas(idv)
 
-    itens = [
-        normalize_item(i)
-        for i in vendas["data"]
-        if isinstance(i, dict)
-    ]
+    itens = []
+    data = vendas.get("data", [])
+
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+
+        item = normalize_item(raw)
+
+        itens.append({
+            "tipo": item["type"],
+            "viajante": raw.get("passageiro"),
+            "aprovador": raw.get("solicitante"),
+            "departamento": raw.get("nomeFantasiaCliente"),
+            "registro_venda": item.get("numero_venda"),
+            "preco_total": item.get("preco_total"),
+            "data_evento": item.get("data_evento"),
+            "flytour": item
+        })
 
     return {
         "idv": idv,
@@ -180,16 +216,25 @@ def process(idv: str, full=False):
 
 @app.get("/")
 def root():
-    return {"status": "online"}
+    return {"status": "API online"}
 
 
-# 🚀 rápido (UI)
 @app.get("/compare/{idv}")
-def compare(idv: str):
-    return process(idv, full=False)
+def compare_one(idv: str):
+    return process_single_idv(idv)
 
 
-# 🔥 completo (tudo)
-@app.get("/compare-full/{idv}")
-def compare_full(idv: str):
-    return process(idv, full=True)
+@app.get("/compare")
+def compare_many(ids: str = Query(...)):
+    return {
+        "resultados": [process_single_idv(i) for i in split_ids(ids)]
+    }
+
+
+@app.get("/feed")
+def feed(ids: Optional[str] = None):
+    id_list = split_ids(ids) if ids else ["1169902"]
+
+    return {
+        "resultados": [process_single_idv(i) for i in id_list]
+    }
