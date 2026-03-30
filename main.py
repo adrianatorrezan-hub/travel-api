@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# 🔥 CORS (ESSENCIAL)
+# 🔥 CORS
 # =========================
 
 app.add_middleware(
@@ -75,12 +75,14 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         r.raise_for_status()
         data = r.json()
 
-        print("\n===== FLYTOUR RESPONSE =====")
+        print("\n===== DEBUG FLYTOUR =====")
         print(data)
 
+        # padrão correto
         if isinstance(data, dict) and "data" in data:
             return {"data": data["data"]}
 
+        # fallback
         if isinstance(data, list):
             return {"data": data}
 
@@ -91,60 +93,33 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# NORMALIZAÇÃO (CORRIGIDO)
+# 🔥 NORMALIZAÇÃO (SEM ERRO)
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
-    produto = str(item.get("codigoProduto", "")).upper()
+    # 🔥 pega qualquer valor possível
+    preco = (
+        safe_float(item.get("tarifa")) or
+        safe_float(item.get("valorTotal")) or
+        safe_float(item.get("valor")) or
+        0
+    )
 
-    # ✈️ AÉREO
-    if produto == "TKT":
-        preco = safe_float(item.get("tarifa"))
+    if preco == 0:
+        return None
 
-        return {
-            "type": "flight",
-            "fornecedor": item.get("nomeFornecedor"),
-            "categoria": item.get("classe"),
-            "preco_total": preco,
-            "preco_unitario": preco,
-            "origem": item.get("origemRotaAereo"),
-            "destino": item.get("destinoRotaAereo"),
-            "rota": item.get("rotaResumida"),
-            "data": item.get("dtInicioServicos"),
-        }
-
-    # 🏨 HOTEL
-    if produto == "HOTEL":
-        total = safe_float(item.get("valorTotal"))
-        diarias = safe_int(item.get("qtdTrechosDiarias")) or 1
-
-        return {
-            "type": "hotel",
-            "fornecedor": item.get("nomeFornecedor"),
-            "categoria": item.get("categoriaHotel"),
-            "preco_total": total,
-            "preco_unitario": calc_unit_price(total, diarias),
-            "cidade": item.get("cidadeFornecedor"),
-            "diarias": diarias,
-        }
-
-    # 🚗 CARRO
-    if produto in ["CAR", "LOC"]:
-        total = safe_float(item.get("valorTotal"))
-        diarias = safe_int(item.get("qtdTrechosDiarias")) or 1
-
-        return {
-            "type": "car",
-            "fornecedor": item.get("nomeFornecedor"),
-            "categoria": item.get("categoriaVeiculo"),
-            "preco_total": total,
-            "preco_unitario": calc_unit_price(total, diarias),
-            "cidade": item.get("cidadeFornecedor"),
-            "diarias": diarias,
-        }
-
-    return None
+    return {
+        "type": item.get("codigoProduto", "outros"),
+        "fornecedor": item.get("nomeFornecedor"),
+        "categoria": item.get("classe") or item.get("categoriaHotel"),
+        "preco_total": preco,
+        "preco_unitario": preco,
+        "origem": item.get("origemRotaAereo"),
+        "destino": item.get("destinoRotaAereo"),
+        "rota": item.get("rotaResumida"),
+        "data": item.get("dtInicioServicos"),
+    }
 
 # =========================
 # PROCESSAMENTO
@@ -156,8 +131,12 @@ def process_single_idv(idv: str):
     itens = []
     data = vendas.get("data", [])
 
+    # 🔥 GARANTE LISTA REAL
     if isinstance(data, dict):
-        data = [data]
+        data = list(data.values())
+
+    if not isinstance(data, list):
+        data = []
 
     for raw in data:
 
