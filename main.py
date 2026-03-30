@@ -1,20 +1,34 @@
 import requests
 import time
+import re
+import json
 
+# URL base da API
 BASE_URL = "http://api-armac-prd.eba-gprb3wed.sa-east-1.elasticbeanstalk.com/api/armac/vendas"
+
+
+def extrair_total_paginas(message):
+    """
+    Extrai o total de páginas da mensagem da API
+    Ex: 'Successfully retrieved 50 vendas... (Page 1 of 190)'
+    """
+    match = re.search(r'Page\s+\d+\s+of\s+(\d+)', message)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def buscar_todas_vendas():
     page = 1
     page_size = 50
     todas_vendas = []
+    total_paginas = None
 
     print("🚀 Iniciando coleta de dados da API...\n")
 
     while True:
         try:
             url = f"{BASE_URL}?page={page}&pageSize={page_size}"
-            print(f"📄 Buscando página {page}...")
 
             response = requests.get(url, timeout=30)
 
@@ -24,7 +38,16 @@ def buscar_todas_vendas():
 
             json_data = response.json()
 
-            # Estrutura da API
+            # Descobrir total de páginas na primeira chamada
+            if total_paginas is None:
+                total_paginas = extrair_total_paginas(json_data.get("message", ""))
+
+            # Mostrar progresso
+            if total_paginas:
+                print(f"📄 Página {page}/{total_paginas}")
+            else:
+                print(f"📄 Página {page}")
+
             vendas = json_data.get("data", [])
 
             if not vendas:
@@ -33,17 +56,20 @@ def buscar_todas_vendas():
 
             todas_vendas.extend(vendas)
 
-            print(f"✔ {len(vendas)} registros recebidos (Total acumulado: {len(todas_vendas)})")
-
-            # Se veio menos que o limite → última página
-            if len(vendas) < page_size:
+            # Parada segura pela quantidade total de páginas
+            if total_paginas and page >= total_paginas:
                 print("\n🏁 Última página alcançada.")
+                break
+
+            # Fallback (caso API mude comportamento)
+            if len(vendas) < page_size:
+                print("\n🏁 Última página detectada por volume.")
                 break
 
             page += 1
 
-            # Pequeno delay para não sobrecarregar API
-            time.sleep(0.5)
+            # Evita sobrecarga na API
+            time.sleep(0.3)
 
         except Exception as e:
             print(f"❌ Erro inesperado: {e}")
@@ -54,10 +80,12 @@ def buscar_todas_vendas():
 
 
 def salvar_em_json(dados, arquivo="vendas.json"):
-    import json
-    with open(arquivo, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False, indent=2)
-    print(f"💾 Dados salvos em {arquivo}")
+    try:
+        with open(arquivo, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)
+        print(f"💾 Dados salvos em: {arquivo}")
+    except Exception as e:
+        print(f"❌ Erro ao salvar arquivo: {e}")
 
 
 def main():
