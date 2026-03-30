@@ -50,6 +50,14 @@ def safe_float(v: Any) -> float:
 def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
+def parse_date(dt):
+    try:
+        if not dt:
+            return None
+        return datetime.fromisoformat(dt.replace("Z", ""))
+    except:
+        return None
+
 # =========================
 # 🔥 FLYTOUR
 # =========================
@@ -69,7 +77,6 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         print("\n===== DEBUG FLYTOUR =====")
         print(data)
 
-        # 🔥 normalização de resposta
         if isinstance(data, dict):
             if "data" in data:
                 return {"data": data["data"]}
@@ -87,7 +94,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# 🔥 NORMALIZAÇÃO (CORRETA)
+# 🔥 NORMALIZAÇÃO FINAL
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -102,38 +109,50 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if preco == 0:
         return None
 
-    # 🔥 MAPEAMENTO REAL FLYTOUR
     tipo_raw = str(item.get("codigoProduto", "")).upper()
 
-    if tipo_raw in ["TKT", "AIR"]:
+    if any(x in tipo_raw for x in ["TKT", "AIR", "FLT"]):
         categoria = "aereo"
-    elif tipo_raw in ["HTL", "HOTEL"]:
+
+    elif any(x in tipo_raw for x in ["HTL", "HOTEL", "HOS", "ACC"]):
         categoria = "hotel"
-    elif tipo_raw in ["CAR", "LOC"]:
+
+    elif any(x in tipo_raw for x in ["CAR", "LOC", "VEI", "RENT"]):
         categoria = "carro"
+
     else:
-        categoria = "outros"
+        if item.get("dtInicioServicos") and item.get("dtFimServicos"):
+            categoria = "hotel"
+        else:
+            categoria = "outros"
 
-    # 🔥 DATAS
-    data_compra = item.get("dtCriacao") or item.get("dataCriacao")
-    data_aprovacao = item.get("dtAprovacao") or item.get("dataAprovacao")
+    # =========================
+    # DATAS
+    # =========================
 
-    checkin = item.get("dtInicioServicos")
-    checkout = item.get("dtFimServicos")
+    checkin_dt = parse_date(item.get("dtInicioServicos"))
+    checkout_dt = parse_date(item.get("dtFimServicos"))
 
-    # 🔥 DIAS
+    data_compra_dt = parse_date(
+        item.get("dtCriacao") or item.get("dataCriacao")
+    )
+
+    data_principal = checkin_dt or data_compra_dt
+
+    # =========================
+    # DIAS
+    # =========================
+
     dias = 1
-    try:
-        if checkin and checkout:
-            d1 = datetime.fromisoformat(checkin.replace("Z", ""))
-            d2 = datetime.fromisoformat(checkout.replace("Z", ""))
-            dias = max((d2 - d1).days, 1)
-    except:
-        dias = 1
+    if checkin_dt and checkout_dt:
+        dias = max((checkout_dt - checkin_dt).days, 1)
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 POLÍTICA
+    # =========================
+    # POLÍTICA
+    # =========================
+
     politica = "dentro"
     motivo = None
 
@@ -157,11 +176,9 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "destino": item.get("destinoRotaAereo"),
         "rota": item.get("rotaResumida"),
 
-        "data_compra": data_compra,
-        "data_aprovacao": data_aprovacao,
-        "checkin": checkin,
-        "checkout": checkout,
-        "data": checkin or data_compra,
+        "checkin": checkin_dt.isoformat() if checkin_dt else None,
+        "checkout": checkout_dt.isoformat() if checkout_dt else None,
+        "data": data_principal.isoformat() if data_principal else None,
 
         "dias": dias,
         "politica": politica,
@@ -194,14 +211,14 @@ def process_single_idv(idv: str):
             continue
 
         itens.append({
-            "tipo": contract_item["type"],  # 🔥 ESSENCIAL PARA FRONT
+            "tipo": contract_item["type"],
             "viajante": raw.get("passageiro"),
             "aprovador": raw.get("solicitante"),
             "departamento": raw.get("nomeFantasiaCliente"),
             "flytour": contract_item
         })
 
-    print(f"IDV {idv} -> {len(itens)} itens processados")
+    print(f"IDV {idv} -> {len(itens)} itens")
 
     return {
         "idv": idv,
@@ -227,16 +244,16 @@ def compare_many(ids: str = Query(...)):
         "resultados": [process_single_idv(i) for i in split_ids(ids)]
     }
 
-# 🔥 ENDPOINT PRINCIPAL DO LOVABLE
+# 🔥 ENDPOINT PRINCIPAL (LOVABLE)
 @app.get("/historico/{idv}")
 def historico(idv: str):
     resultado = process_single_idv(idv)
 
     return {
-        "itens": resultado["itens"]  # 🔥 CRÍTICO
+        "itens": resultado["itens"]
     }
 
-# 🔥 FEED PADRÃO
+# 🔥 FEED
 @app.get("/feed")
 def feed(ids: Optional[str] = None):
     id_list = split_ids(ids) if ids else ["1169902"]
