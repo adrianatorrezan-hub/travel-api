@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# 🔥 CORS
+# CORS
 # =========================
 
 app.add_middleware(
@@ -33,7 +33,6 @@ FLYTOUR_USER = os.getenv("FLYTOUR_USER", "admin")
 FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
-
 REQUEST_TIMEOUT = 20
 
 # =========================
@@ -47,7 +46,7 @@ def safe_float(v: Any) -> float:
 
         valor = float(v)
 
-        # 🔥 CORREÇÃO DE ESCALA (centavos)
+        # 🔥 CORREÇÃO DE CENTAVOS
         if valor > 10000:
             valor = valor / 100
 
@@ -71,7 +70,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 FLYTOUR
+# API FLYTOUR
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -95,12 +94,12 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
     except Exception as e:
-        print("❌ ERRO FLYTOUR:", str(e))
+        print("ERRO FLYTOUR:", str(e))
         return {"data": []}
 
 
 # =========================
-# 🔥 NORMALIZAÇÃO FINAL
+# NORMALIZAÇÃO
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -115,7 +114,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         0.0
     )
 
-    # 🔥 DETECÇÃO DE CATEGORIA ROBUSTA
+    # 🔥 CATEGORIA
     tipo_raw = str(item.get("codigoProduto", "")).upper()
     descricao = str(item).lower()
 
@@ -134,24 +133,31 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         categoria = "outros"
 
     # 🔥 DATAS
-    checkin = parse_date(item.get("dtInicioServicos"))
-    checkout = parse_date(item.get("dtFimServicos"))
-    data_compra = parse_date(item.get("dtCriacao") or item.get("dataCriacao"))
-    data_aprovacao = parse_date(item.get("dtAprovacao") or item.get("dataAprovacao"))
+    data_lancamento = parse_date(
+        item.get("dataLancamento") or
+        item.get("dtLancamento") or
+        item.get("dtCriacao")
+    )
 
-    data_evento = checkin or data_compra or data_aprovacao or datetime.now().isoformat()
+    dt_inicio = parse_date(item.get("dtInicioServicos"))
+    dt_fim = parse_date(item.get("dtFimServicos"))
+
+    data_evento = dt_inicio or data_lancamento or datetime.now().isoformat()
 
     # 🔥 DIAS
     dias = 1
     try:
-        if checkin and checkout:
-            d1 = datetime.fromisoformat(checkin)
-            d2 = datetime.fromisoformat(checkout)
+        if dt_inicio and dt_fim:
+            d1 = datetime.fromisoformat(dt_inicio)
+            d2 = datetime.fromisoformat(dt_fim)
             dias = max((d2 - d1).days, 1)
     except:
         dias = 1
 
     diaria = round(preco / dias, 2) if dias else preco
+
+    # 🔥 FATURAS
+    faturas = item.get("faturas") or item.get("numeroFatura") or []
 
     # 🔥 POLÍTICA
     politica = "dentro"
@@ -168,22 +174,21 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "type": categoria,
         "categoria": categoria,
-        "fornecedor": item.get("nomeFornecedor"),
 
         "preco_total": preco,
         "preco_unitario": diaria,
 
-        "origem": item.get("origemRotaAereo"),
-        "destino": item.get("destinoRotaAereo"),
-        "rota": item.get("rotaResumida"),
-
         "data": data_evento,
         "data_evento": data_evento,
 
-        "checkin": checkin,
-        "checkout": checkout,
-        "data_compra": data_compra,
-        "data_aprovacao": data_aprovacao,
+        "data_lancamento": data_lancamento,
+        "dt_inicio_servico": dt_inicio,
+        "dt_fim_servico": dt_fim,
+
+        "checkin": dt_inicio,
+        "checkout": dt_fim,
+
+        "faturas": faturas,
 
         "dias": dias,
         "politica": politica,
