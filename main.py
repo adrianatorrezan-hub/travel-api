@@ -35,7 +35,7 @@ FLYTOUR_PASS = os.getenv("FLYTOUR_PASS", "Armac2025@Secure")
 
 AUTH = (FLYTOUR_USER, FLYTOUR_PASS)
 
-REQUEST_TIMEOUT = 10
+REQUEST_TIMEOUT = 15
 
 # =========================
 # HELPERS
@@ -60,7 +60,7 @@ def split_ids(ids: str) -> List[str]:
     return [x.strip() for x in ids.split(",") if x.strip()]
 
 # =========================
-# 🔥 FLYTOUR (CORRIGIDO)
+# 🔥 FLYTOUR
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -68,7 +68,7 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
     params = {}
     if idv:
-        params["idvExterno"] = idv  # 🔥 ESSENCIAL
+        params["idvExterno"] = idv
 
     try:
         r = requests.get(url, auth=AUTH, params=params, timeout=REQUEST_TIMEOUT)
@@ -91,19 +91,16 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
         return {"data": []}
 
 # =========================
-# NORMALIZAÇÃO
+# NORMALIZAÇÃO (CORRIGIDO)
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    tipo = safe_int(item.get("tipoRoteiro"))
+
+    produto = str(item.get("codigoProduto", "")).upper()
 
     # ✈️ AÉREO
-    if tipo == 2:
+    if produto == "TKT":
         preco = safe_float(item.get("tarifa"))
-        rota = item.get("rotaResumida", "")
-
-        origem = rota.split("/")[0] if "/" in rota else None
-        destino = rota.split("/")[1] if "/" in rota else None
 
         return {
             "type": "flight",
@@ -111,14 +108,14 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "categoria": item.get("classe"),
             "preco_total": preco,
             "preco_unitario": preco,
-            "origem": origem,
-            "destino": destino,
-            "rota": rota,
+            "origem": item.get("origemRotaAereo"),
+            "destino": item.get("destinoRotaAereo"),
+            "rota": item.get("rotaResumida"),
             "data": item.get("dtInicioServicos"),
         }
 
     # 🏨 HOTEL
-    if tipo == 3:
+    if produto == "HOTEL":
         total = safe_float(item.get("valorTotal"))
         diarias = safe_int(item.get("qtdTrechosDiarias")) or 1
 
@@ -133,7 +130,7 @@ def normalize_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
     # 🚗 CARRO
-    if tipo == 1:
+    if produto in ["CAR", "LOC"]:
         total = safe_float(item.get("valorTotal"))
         diarias = safe_int(item.get("qtdTrechosDiarias")) or 1
 
@@ -163,6 +160,7 @@ def process_single_idv(idv: str):
         data = [data]
 
     for raw in data:
+
         if not isinstance(raw, dict):
             continue
 
