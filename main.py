@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Armac Viagem Corporativa API")
 
 # =========================
-# CORS
+# 🔥 CORS
 # =========================
 
 app.add_middleware(
@@ -46,12 +46,11 @@ def safe_float(v: Any) -> float:
 
         valor = float(v)
 
-        # 🔥 CORREÇÃO DE CENTAVOS
+        # 🔥 Corrige centavos (Flytour costuma mandar inteiro)
         if valor > 10000:
             valor = valor / 100
 
         return valor
-
     except:
         return 0.0
 
@@ -70,7 +69,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# API FLYTOUR
+# 🔥 FLYTOUR
 # =========================
 
 def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
@@ -99,18 +98,17 @@ def get_vendas(idv: Optional[str] = None) -> Dict[str, Any]:
 
 
 # =========================
-# NORMALIZAÇÃO
+# 🔥 NORMALIZAÇÃO FINAL
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
-    # 🔥 PREÇO CORRETO
+    # 🔥 PREÇO
     preco = (
         safe_float(item.get("valorTotal")) or
         safe_float(item.get("tarifaTotal")) or
         safe_float(item.get("valor")) or
         safe_float(item.get("tarifa")) or
-        safe_float(item.get("preco")) or
         0.0
     )
 
@@ -118,17 +116,12 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
     tipo_raw = str(item.get("codigoProduto", "")).upper()
     descricao = str(item).lower()
 
-    if any(x in tipo_raw for x in ["TKT", "AIR"]) or "aereo" in descricao:
+    if tipo_raw in ["TKT", "AIR"] or "aereo" in descricao:
         categoria = "aereo"
-
-    elif any(x in tipo_raw for x in ["HTL", "HOTEL"]) or "hotel" in descricao:
+    elif tipo_raw in ["HTL", "HOTEL"] or "hotel" in descricao:
         categoria = "hotel"
-
-    elif any(x in tipo_raw for x in ["CAR", "LOC"]) or any(
-        x in descricao for x in ["carro", "locacao", "rent"]
-    ):
+    elif tipo_raw in ["CAR", "LOC"] or any(x in descricao for x in ["carro", "locacao"]):
         categoria = "carro"
-
     else:
         categoria = "outros"
 
@@ -156,8 +149,27 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     diaria = round(preco / dias, 2) if dias else preco
 
-    # 🔥 FATURAS
-    faturas = item.get("faturas") or item.get("numeroFatura") or []
+    # 🔥 FATURAS (robusto)
+    faturas = (
+        item.get("faturas") or
+        item.get("numeroFatura") or
+        item.get("fatura") or
+        item.get("numFatura") or
+        None
+    )
+
+    if isinstance(faturas, list):
+        faturas = ", ".join([str(f) for f in faturas if f])
+    elif isinstance(faturas, dict):
+        faturas = str(faturas)
+
+    # 🔥 NUMERO VENDA
+    numero_venda = (
+        item.get("numeroVenda") or
+        item.get("idVenda") or
+        item.get("id") or
+        item.get("idvExterno")
+    )
 
     # 🔥 POLÍTICA
     politica = "dentro"
@@ -175,8 +187,15 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "type": categoria,
         "categoria": categoria,
 
+        "numero_venda": numero_venda,
+        "fornecedor": item.get("nomeFornecedor"),
+
         "preco_total": preco,
         "preco_unitario": diaria,
+
+        "origem": item.get("origemRotaAereo"),
+        "destino": item.get("destinoRotaAereo"),
+        "rota": item.get("rotaResumida"),
 
         "data": data_evento,
         "data_evento": data_evento,
