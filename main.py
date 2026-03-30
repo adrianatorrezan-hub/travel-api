@@ -3,13 +3,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Armac Travel API")
 
 # =========================
-# CORS
+# 🔥 CORS
 # =========================
 
 app.add_middleware(
@@ -21,7 +21,7 @@ app.add_middleware(
 )
 
 # =========================
-# CONFIG
+# 🔧 CONFIG
 # =========================
 
 FLYTOUR_BASE_URL = os.getenv(
@@ -34,11 +34,11 @@ AUTH = (
     os.getenv("FLYTOUR_PASS", "Armac2025@Secure"),
 )
 
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = 30
 
 
 # =========================
-# HELPERS
+# 🧠 HELPERS
 # =========================
 
 def safe_float(v: Any) -> float:
@@ -47,6 +47,8 @@ def safe_float(v: Any) -> float:
             return 0.0
 
         valor = float(str(v).replace(",", "."))
+
+        # corrige centavos
         if valor > 10000:
             valor = valor / 100
 
@@ -65,24 +67,26 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
 
 
 # =========================
-# 🔥 BUSCA TOTAL (SEM FILTRO)
+# 🔥 BUSCA POR PERÍODO (SEM IDV)
 # =========================
 
-def get_vendas() -> Dict[str, Any]:
+def get_vendas_por_periodo() -> Dict[str, Any]:
     url = f"{FLYTOUR_BASE_URL}/api/armac/vendas"
 
     all_data = []
     page = 1
     page_size = 100
-    max_pages = 10  # ⚠️ evita 502 no Render
+
+    # 🔥 AJUSTE O PERÍODO AQUI
+    data_inicio = "2024-01-01"
+    data_fim = "2025-12-31"
 
     while True:
-        if page > max_pages:
-            break
-
         params = {
             "page": page,
-            "pageSize": page_size
+            "pageSize": page_size,
+            "dataInicio": data_inicio,
+            "dataFim": data_fim
         }
 
         try:
@@ -96,14 +100,18 @@ def get_vendas() -> Dict[str, Any]:
             r.raise_for_status()
             data = r.json()
 
-            items = data.get("data") if isinstance(data, dict) else data
+            if isinstance(data, dict) and "data" in data:
+                items = data["data"]
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = []
 
             if not items:
                 break
 
             print(f"📄 Página {page}: {len(items)} registros")
 
-            # 🔥 TRAZ TUDO
             all_data.extend(items)
 
             if len(items) < page_size:
@@ -121,7 +129,7 @@ def get_vendas() -> Dict[str, Any]:
 
 
 # =========================
-# NORMALIZAÇÃO
+# 🔥 NORMALIZAÇÃO
 # =========================
 
 def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -154,11 +162,11 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # =========================
-# PROCESSAMENTO
+# 🔥 PROCESSAMENTO FINAL
 # =========================
 
 def process_all():
-    vendas = get_vendas()
+    vendas = get_vendas_por_periodo()
 
     itens = []
 
@@ -175,7 +183,7 @@ def process_all():
 
 
 # =========================
-# ENDPOINTS
+# 🚀 ENDPOINTS
 # =========================
 
 @app.get("/")
